@@ -60,7 +60,7 @@ jobs:
         run: maturin build --release --interpreter python${{ matrix.python-version }}
 
       - name: 上传wheels作为artifacts
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: wheels
           path: target/wheels/*.whl
