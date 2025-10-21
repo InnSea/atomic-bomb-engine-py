@@ -24,12 +24,7 @@ impl BatchRunner {
             runtime: tokio::runtime::Runtime::new().unwrap(),
             stream: Arc::new(Mutex::new(None)),
             is_done: Arc::new(Mutex::new(false)),
-            should_stop: Arc::new(AtomicBool::new(false)),
         }
-    }
-
-    fn stop(&self) {
-        self.should_stop.store(true, Ordering::SeqCst);
     }
 
     #[pyo3(signature = (
@@ -98,14 +93,6 @@ impl BatchRunner {
 
     fn __next__(slf: PyRefMut<'_, Self>, py: Python) -> PyResult<Option<PyObject>> {
         let is_done_clone = slf.is_done.clone();
-
-        if slf.should_stop.load(Ordering::SeqCst) {
-            slf.runtime.block_on(async {
-                let mut done_lock = is_done_clone.lock().await;
-                *done_lock = true;
-            });
-            return Ok(None);
-        }
 
         let mut stream_guard = slf.runtime.block_on(async {
             let stream = slf.stream.lock().await;

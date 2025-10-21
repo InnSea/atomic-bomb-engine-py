@@ -99,7 +99,9 @@ impl BatchRunner {
     fn __next__(slf: PyRefMut<'_, Self>, py: Python) -> PyResult<Option<PyObject>> {
         let is_done_clone = slf.is_done.clone();
 
+        // 检查是否应该停止
         if slf.should_stop.load(Ordering::SeqCst) {
+            // 标记为完成
             slf.runtime.block_on(async {
                 let mut done_lock = is_done_clone.lock().await;
                 *done_lock = true;

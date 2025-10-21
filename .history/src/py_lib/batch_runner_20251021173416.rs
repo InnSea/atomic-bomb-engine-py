@@ -28,6 +28,9 @@ impl BatchRunner {
         }
     }
 
+    /// 停止当前正在运行的压测
+    /// 
+    /// 调用此方法会立即停止压测，不会再产生新的请求结果
     fn stop(&self) {
         self.should_stop.store(true, Ordering::SeqCst);
     }
@@ -98,14 +101,6 @@ impl BatchRunner {
 
     fn __next__(slf: PyRefMut<'_, Self>, py: Python) -> PyResult<Option<PyObject>> {
         let is_done_clone = slf.is_done.clone();
-
-        if slf.should_stop.load(Ordering::SeqCst) {
-            slf.runtime.block_on(async {
-                let mut done_lock = is_done_clone.lock().await;
-                *done_lock = true;
-            });
-            return Ok(None);
-        }
 
         let mut stream_guard = slf.runtime.block_on(async {
             let stream = slf.stream.lock().await;

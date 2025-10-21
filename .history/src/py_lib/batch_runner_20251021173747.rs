@@ -100,6 +100,7 @@ impl BatchRunner {
         let is_done_clone = slf.is_done.clone();
 
         if slf.should_stop.load(Ordering::SeqCst) {
+            // 标记为完成
             slf.runtime.block_on(async {
                 let mut done_lock = is_done_clone.lock().await;
                 *done_lock = true;
