@@ -10,7 +10,10 @@ crate-type = ["cdylib"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-atomic-bomb-engine = "0.41.1"
+# 使用子模块路径依赖，这样会读取子模块中的最新代码
+atomic-bomb-engine = { path = "./atomic-bomb-engine" }
+# 如果要使用 crates.io 版本，取消下面的注释并注释上面的
+#atomic-bomb-engine = "0.41.1"
 #atomic-bomb-engine = { git = "https://github.com/we-lsp/atomic-bomb-engine.git", branch = "ExponentialMovingAverage"}
 tokio = "1.36.0"
 pyo3-asyncio = { version = "0.20.0", features = ["tokio-runtime", "async-std"] }

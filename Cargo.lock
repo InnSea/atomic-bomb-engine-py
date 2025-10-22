@@ -183,8 +183,6 @@ checksum = "8b75356056920673b02621b35afd0f7dda9306d03c79a30f5c56c44cf256e3de"
 [[package]]
 name = "atomic-bomb-engine"
 version = "0.41.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "47ec75935e08e27cc81da711141ffeef544c7872df1e37a2f912af0a6167cd75"
 dependencies = [
  "anyhow",
  "futures",

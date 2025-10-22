@@ -17,7 +17,6 @@ pub(crate) struct BatchRunner {
     is_done: Arc<Mutex<bool>>,
     should_stop: Arc<AtomicBool>,
     task_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
-    engine_should_stop: Arc<AtomicBool>,
 }
 
 #[pymethods]
@@ -30,14 +29,11 @@ impl BatchRunner {
             is_done: Arc::new(Mutex::new(false)),
             should_stop: Arc::new(AtomicBool::new(false)),
             task_handle: Arc::new(Mutex::new(None)),
-            engine_should_stop: Arc::new(AtomicBool::new(false)),
         }
     }
 
     fn stop(&self) {
-        // 设置停止标志
         self.should_stop.store(true, Ordering::SeqCst);
-        self.engine_should_stop.store(true, Ordering::SeqCst);
         
         // 强制中止后台任务
         let task_handle = self.task_handle.clone();
@@ -97,7 +93,6 @@ impl BatchRunner {
         let stream_clone = self.stream.clone();
         let task_handle_clone = self.task_handle.clone();
         let should_stop_clone = self.should_stop.clone();
-        let engine_should_stop_clone = self.engine_should_stop.clone();
         
         let endpoints = utils::parse_api_endpoints::new(py, api_endpoints)
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
@@ -109,7 +104,6 @@ impl BatchRunner {
         let fut = async move {
             // 重置停止标志
             should_stop_clone.store(false, Ordering::SeqCst);
-            engine_should_stop_clone.store(false, Ordering::SeqCst);
             
             // 启动后台任务
             let handle = tokio::spawn(async move {
@@ -125,7 +119,6 @@ impl BatchRunner {
                     setup_opts,
                     assert_channel_buffer_size,
                     ema_alpha,
-                    Some(engine_should_stop_clone),
                 )
                 .await;
                 *stream_clone.lock().await = Some(stream);

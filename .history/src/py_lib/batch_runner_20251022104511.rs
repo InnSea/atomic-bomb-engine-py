@@ -8,7 +8,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
-use std::time::Duration;
 
 #[pyclass]
 pub(crate) struct BatchRunner {
@@ -17,7 +16,6 @@ pub(crate) struct BatchRunner {
     is_done: Arc<Mutex<bool>>,
     should_stop: Arc<AtomicBool>,
     task_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
-    engine_should_stop: Arc<AtomicBool>,
 }
 
 #[pymethods]
@@ -30,39 +28,19 @@ impl BatchRunner {
             is_done: Arc::new(Mutex::new(false)),
             should_stop: Arc::new(AtomicBool::new(false)),
             task_handle: Arc::new(Mutex::new(None)),
-            engine_should_stop: Arc::new(AtomicBool::new(false)),
         }
     }
 
     fn stop(&self) {
-        // 设置停止标志
         self.should_stop.store(true, Ordering::SeqCst);
-        self.engine_should_stop.store(true, Ordering::SeqCst);
         
-        // 强制中止后台任务
+        // 中止后台任务
         let task_handle = self.task_handle.clone();
-        let stream_clone = self.stream.clone();
-        let is_done_clone = self.is_done.clone();
-        
         self.runtime.block_on(async move {
-            // 中止任务句柄
             let mut handle_guard = task_handle.lock().await;
             if let Some(handle) = handle_guard.take() {
                 handle.abort();
-                // 等待任务真正结束
-                let _ = tokio::time::timeout(Duration::from_millis(500), async {
-                    // 给一点时间让任务清理
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                }).await;
             }
-            
-            // 清理 stream
-            let mut stream_lock = stream_clone.lock().await;
-            *stream_lock = None;
-            
-            // 标记为完成
-            let mut done_lock = is_done_clone.lock().await;
-            *done_lock = true;
         });
     }
 
@@ -97,7 +75,6 @@ impl BatchRunner {
         let stream_clone = self.stream.clone();
         let task_handle_clone = self.task_handle.clone();
         let should_stop_clone = self.should_stop.clone();
-        let engine_should_stop_clone = self.engine_should_stop.clone();
         
         let endpoints = utils::parse_api_endpoints::new(py, api_endpoints)
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
@@ -109,7 +86,6 @@ impl BatchRunner {
         let fut = async move {
             // 重置停止标志
             should_stop_clone.store(false, Ordering::SeqCst);
-            engine_should_stop_clone.store(false, Ordering::SeqCst);
             
             // 启动后台任务
             let handle = tokio::spawn(async move {
@@ -125,7 +101,6 @@ impl BatchRunner {
                     setup_opts,
                     assert_channel_buffer_size,
                     ema_alpha,
-                    Some(engine_should_stop_clone),
                 )
                 .await;
                 *stream_clone.lock().await = Some(stream);
@@ -176,9 +151,10 @@ impl BatchRunner {
 
         match stream_guard.as_mut() {
             Some(stream) => {
+                // 使用 select 来同时监听 stream 和 stop 信号
                 let should_stop = slf.should_stop.clone();
                 let next_stream = slf.runtime.block_on(async {
-                    // 再次检查停止标志
+                    // 检查是否需要停止
                     if should_stop.load(Ordering::SeqCst) {
                         return None;
                     }
