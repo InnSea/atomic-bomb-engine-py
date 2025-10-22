@@ -16,10 +16,13 @@ jobs:
 
     steps:
       - name: 签出rust代码
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
 
       - name: 签出前端
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
         with:
           repository: GiantAxeWhy/atomic-bomb-engine-front
           path: vue-project
