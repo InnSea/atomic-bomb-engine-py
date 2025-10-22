@@ -1,0 +1,32 @@
+[package]
+name = "atomic-bomb-engine"
+version = "0.41.1"
+edition = "2021"
+description = "A high performance torture testing engine"
+license = "MIT"
+
+[lib]
+name = "atomic_bomb_engine"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+reqwest = { version = "0.12.4", features = ["json", "stream", "cookies", "multipart"] }
+tokio = { version = "1", features = ["full"] }
+histogram = "0.10.0"
+anyhow = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = { version = "1.0", features = [] }
+lazy_static = "1.4.0"
+parking_lot = "0.12.1"
+winapi = { version = "0.3", features = ["winbase", "winnt"], optional = true }
+jsonpath_lib = "0.3.0"
+time = "0.3.34"
+os_info= "3.7.0"
+futures = "0.3.30"
+handlebars = "5.1.2"
+rand = "0.8.5"
+url = "2.5.0"
+
+[target.'cfg(windows)'.dependencies]
+winapi = { version = "0.3", features = ["winbase"] }
