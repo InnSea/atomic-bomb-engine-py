@@ -7,7 +7,7 @@ on:
       python_version:
         description: 'Python 版本'
         required: true
-        default: '3.13'
+        default: '3.12'
         type: choice
         options:
           - '3.8'
@@ -15,7 +15,6 @@ on:
           - '3.10'
           - '3.11'
           - '3.12'
-          - '3.13'
       
       build_mode:
         description: '构建模式'

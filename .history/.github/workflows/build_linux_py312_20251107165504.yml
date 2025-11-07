@@ -25,9 +25,7 @@ jobs:
       - name: 📥 签出代码
         uses: actions/checkout@v4
         with:
-          # 自动拉取子模块（如果使用了 submodule）
           submodules: recursive
-          # 确保签出完整历史
           fetch-depth: 0
       
       - name: 🐍 设置 Python 3.13
