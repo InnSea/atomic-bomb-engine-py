@@ -1,5 +1,5 @@
 use crate::utils;
-use crate::utils::depythonize::depythonize;
+use pythonize::depythonize;
 use std::collections::HashMap;
 
 use atomic_bomb_engine::models;

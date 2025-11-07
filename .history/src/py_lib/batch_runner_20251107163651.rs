@@ -253,7 +253,7 @@ impl BatchRunner {
                 }
             }
             None => {
-                // eprintln!("stream未初始化，请等待");
+                eprintln!("stream未初始化，请等待");
                 let dict = PyDict::new(py);
                 dict.set_item("should_wait", true)?;
                 Ok(Some(dict.into_any().unbind()))

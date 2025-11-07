@@ -1,5 +1,5 @@
-use pyo3::types::{PyDict, PyList};
-use pyo3::{pyfunction, PyObject, PyResult, Python};
+use pyo3::types::{PyAny, PyDict, PyDictMethods};
+use pyo3::{pyfunction, Py, PyResult, Python};
 
 #[pyfunction]
 #[pyo3(signature=(
@@ -18,13 +18,13 @@ pub(crate) fn setup_option(
     name: String,
     url: String,
     method: String,
-    json: Option<PyObject>,
-    form_data: Option<PyObject>,
-    multipart_options: Option<&PyList>,
-    headers: Option<PyObject>,
+    json: Option<Py<PyAny>>,
+    form_data: Option<Py<PyAny>>,
+    multipart_options: Option<Py<PyAny>>,
+    headers: Option<Py<PyAny>>,
     cookies: Option<String>,
-    jsonpath_extract: Option<&PyList>,
-) -> PyResult<PyObject> {
+    jsonpath_extract: Option<Py<PyAny>>,
+) -> PyResult<Py<PyAny>> {
     let dict = PyDict::new(py);
     dict.set_item("name", name)?;
     dict.set_item("url", url)?;
@@ -47,5 +47,5 @@ pub(crate) fn setup_option(
     if let Some(jsonpath_extract) = jsonpath_extract {
         dict.set_item("jsonpath_extract", jsonpath_extract)?;
     };
-    Ok(dict.into())
+    Ok(dict.into_any().unbind())
 }

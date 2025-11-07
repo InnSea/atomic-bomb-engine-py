@@ -1,4 +1,4 @@
-use crate::utils::depythonize::depythonize;
+use pythonize::depythonize;
 use atomic_bomb_engine::models;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;

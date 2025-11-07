@@ -137,7 +137,7 @@ impl BatchRunner {
             Ok::<(), pyo3::PyErr>(())
         };
 
-        Python::attach(|py| {
+        Python::with_gil(|py| {
             pyo3_async_runtimes::tokio::future_into_py(py, fut)
                 .map(|py_any| py_any.unbind())
         })
@@ -184,7 +184,7 @@ impl BatchRunner {
                         return None;
                     }
                     stream.next().await
-                });
+                })
 
                 match next_stream {
                     Some(Ok(result)) => {
@@ -253,7 +253,7 @@ impl BatchRunner {
                 }
             }
             None => {
-                // eprintln!("stream未初始化，请等待");
+                eprintln!("stream未初始化，请等待");
                 let dict = PyDict::new(py);
                 dict.set_item("should_wait", true)?;
                 Ok(Some(dict.into_any().unbind()))

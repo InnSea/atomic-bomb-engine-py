@@ -1,4 +1,4 @@
-name: Build Linux Python 3.13 Wheel
+name: Build Linux Python 3.12 Wheel
 
 on:
   # 手动触发
@@ -10,6 +10,7 @@ on:
       - main
       - master
       - dev
+      - feature/stop-method  # 你的功能分支
   
   # 创建 tag 时触发
   push:
@@ -18,7 +19,7 @@ on:
 
 jobs:
   build-linux-wheel:
-    name: Build Linux Python 3.13 Wheel
+    name: Build Linux Python 3.12 Wheel
     runs-on: ubuntu-latest
     
     steps:
@@ -30,10 +31,10 @@ jobs:
           # 确保签出完整历史
           fetch-depth: 0
       
-      - name: 🐍 设置 Python 3.13
+      - name: 🐍 设置 Python 3.12
         uses: actions/setup-python@v4
         with:
-          python-version: '3.13'
+          python-version: '3.12'
       
       - name: 🦀 安装 Rust
         uses: actions-rs/toolchain@v1
@@ -50,7 +51,7 @@ jobs:
       - name: 🔨 构建 wheel (manylinux2014)
         run: |
           maturin build --release --strip \
-            --interpreter python3.13 \
+            --interpreter python3.12 \
             --manylinux 2014
       
       - name: 📊 显示构建结果
@@ -74,7 +75,7 @@ jobs:
         run: |
           echo "## 构建信息" > build-info.txt
           echo "- 平台: Linux (manylinux2014)" >> build-info.txt
-          echo "- Python 版本: 3.13" >> build-info.txt
+          echo "- Python 版本: 3.12" >> build-info.txt
           echo "- 构建时间: $(date)" >> build-info.txt
           echo "- Commit: ${{ github.sha }}" >> build-info.txt
           echo "- 分支: ${{ github.ref_name }}" >> build-info.txt
