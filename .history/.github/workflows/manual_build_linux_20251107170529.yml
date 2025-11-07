@@ -46,23 +46,17 @@ jobs:
       
       - name: 📦 安装 maturin
         run: |
-          # 将版本号转换为 cpXY 格式（例如 3.13 -> cp313）
-          PY_VER=$(echo "${{ github.event.inputs.python_version }}" | sed 's/\.//')
-          PYTHON_PATH="/opt/python/cp${PY_VER}-cp${PY_VER}/bin"
-          ${PYTHON_PATH}/pip install maturin
+          /opt/python/cp${{ github.event.inputs.python_version }}-cp${{ github.event.inputs.python_version }}/bin/pip install maturin
       
       - name: 🔨 构建 wheel (${{ github.event.inputs.build_mode }})
         run: |
           source $HOME/.cargo/env
-          PY_VER=$(echo "${{ github.event.inputs.python_version }}" | sed 's/\.//')
-          PYTHON_PATH="/opt/python/cp${PY_VER}-cp${PY_VER}/bin"
-          
           if [ "${{ github.event.inputs.build_mode }}" = "release" ]; then
-            ${PYTHON_PATH}/maturin build --release --strip \
-              --interpreter ${PYTHON_PATH}/python
+            /opt/python/cp${{ github.event.inputs.python_version }}-cp${{ github.event.inputs.python_version }}/bin/maturin build --release --strip \
+              --interpreter /opt/python/cp${{ github.event.inputs.python_version }}-cp${{ github.event.inputs.python_version }}/bin/python
           else
-            ${PYTHON_PATH}/maturin build \
-              --interpreter ${PYTHON_PATH}/python
+            /opt/python/cp${{ github.event.inputs.python_version }}-cp${{ github.event.inputs.python_version }}/bin/maturin build \
+              --interpreter /opt/python/cp${{ github.event.inputs.python_version }}-cp${{ github.event.inputs.python_version }}/bin/python
           fi
       
       - name: 📊 显示构建结果

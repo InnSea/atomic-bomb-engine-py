@@ -20,8 +20,6 @@ jobs:
   build-linux-wheel:
     name: Build Linux Python 3.13 Wheel
     runs-on: ubuntu-latest
-    container:
-      image: quay.io/pypa/manylinux2014_x86_64
     
     steps:
       - name: 📥 签出代码
@@ -30,20 +28,28 @@ jobs:
           submodules: recursive
           fetch-depth: 0
       
+      - name: 🐍 设置 Python 3.13
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.13'
+      
       - name: 🦀 安装 Rust
-        run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
       
       - name: 📦 安装 maturin
         run: |
-          /opt/python/cp313-cp313/bin/pip install maturin
+          pip install --upgrade pip
+          pip install maturin
       
       - name: 🔨 构建 wheel (manylinux2014)
         run: |
-          source $HOME/.cargo/env
-          /opt/python/cp313-cp313/bin/maturin build --release --strip \
-            --interpreter /opt/python/cp313-cp313/bin/python
+          maturin build --release --strip \
+            --interpreter python3.13 \
+            --manylinux 2014
       
       - name: 📊 显示构建结果
         run: |
