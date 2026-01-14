@@ -15,7 +15,8 @@ on:
           - '3.10'
           - '3.11'
           - '3.12'
-          - '1.'
+          - '3.13'
+          - '3.14'
       
       build_mode:
         description: '构建模式'
@@ -30,39 +31,39 @@ jobs:
   build:
     name: 构建 Linux Python ${{ github.event.inputs.python_version }} Wheel
     runs-on: ubuntu-latest
+    container:
+      image: quay.io/pypa/manylinux2014_x86_64
     
     steps:
       - name: 📥 签出代码
         uses: actions/checkout@v4
         with:
-          # 自动拉取子模块（如果使用了 submodule）
           submodules: recursive
       
-      - name: 🐍 设置 Python ${{ github.event.inputs.python_version }}
-        uses: actions/setup-python@v4
-        with:
-          python-version: ${{ github.event.inputs.python_version }}
-      
       - name: 🦀 安装 Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
       
       - name: 📦 安装 maturin
-        run: pip install maturin
+        run: |
+          # 将版本号转换为 cpXY 格式（例如 3.13 -> cp313）
+          PY_VER=$(echo "${{ github.event.inputs.python_version }}" | sed 's/\.//')
+          PYTHON_PATH="/opt/python/cp${PY_VER}-cp${PY_VER}/bin"
+          ${PYTHON_PATH}/pip install maturin
       
       - name: 🔨 构建 wheel (${{ github.event.inputs.build_mode }})
         run: |
+          source $HOME/.cargo/env
+          PY_VER=$(echo "${{ github.event.inputs.python_version }}" | sed 's/\.//')
+          PYTHON_PATH="/opt/python/cp${PY_VER}-cp${PY_VER}/bin"
+          
           if [ "${{ github.event.inputs.build_mode }}" = "release" ]; then
-            maturin build --release --strip \
-              --interpreter python${{ github.event.inputs.python_version }} \
-              --manylinux 2014
+            ${PYTHON_PATH}/maturin build --release --strip \
+              --interpreter ${PYTHON_PATH}/python
           else
-            maturin build \
-              --interpreter python${{ github.event.inputs.python_version }} \
-              --manylinux 2014
+            ${PYTHON_PATH}/maturin build \
+              --interpreter ${PYTHON_PATH}/python
           fi
       
       - name: 📊 显示构建结果

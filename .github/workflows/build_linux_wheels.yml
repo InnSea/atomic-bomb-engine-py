@@ -1,25 +1,25 @@
-name: Build Linux Python 3.13 Wheel
+name: Build Linux Wheels
 
 on:
   # 手动触发
   workflow_dispatch:
   
-  # 推送到指定分支时自动触发
+  # 推送到指定分支或打标签时触发
   push:
     branches:
       - main
       - master
       - dev
-  
-  # 创建 tag 时触发
-  push:
     tags:
       - 'v*'
 
 jobs:
   build-linux-wheel:
-    name: Build Linux Python 3.13 Wheel
+    name: Build Linux Python ${{ matrix.python-version }} Wheel
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.13', '3.14']
     container:
       image: quay.io/pypa/manylinux2014_x86_64
     
@@ -37,13 +37,17 @@ jobs:
       
       - name: 📦 安装 maturin
         run: |
-          /opt/python/cp313-cp313/bin/pip install maturin
+          PY_VER=$(echo "${{ matrix.python-version }}" | sed 's/\.//')
+          /opt/python/cp${PY_VER}-cp${PY_VER}/bin/pip install maturin
       
       - name: 🔨 构建 wheel (manylinux2014)
         run: |
           source $HOME/.cargo/env
-          /opt/python/cp313-cp313/bin/maturin build --release --strip \
-            --interpreter /opt/python/cp313-cp313/bin/python
+          PY_VER=$(echo "${{ matrix.python-version }}" | sed 's/\.//')
+          PYTHON_BIN=/opt/python/cp${PY_VER}-cp${PY_VER}/bin
+          
+          $PYTHON_BIN/maturin build --release --strip \
+            --interpreter $PYTHON_BIN/python
       
       - name: 📊 显示构建结果
         run: |
@@ -58,25 +62,24 @@ jobs:
       - name: 📤 上传 wheel 作为 artifact
         uses: actions/upload-artifact@v4
         with:
-          name: linux-python312-wheel
+          name: linux-python${{ matrix.python-version }}-wheel
           path: target/wheels/*.whl
           retention-days: 30
       
       - name: 📝 生成构建信息
         run: |
-          echo "## 构建信息" > build-info.txt
-          echo "- 平台: Linux (manylinux2014)" >> build-info.txt
-          echo "- Python 版本: 3.13" >> build-info.txt
-          echo "- 构建时间: $(date)" >> build-info.txt
-          echo "- Commit: ${{ github.sha }}" >> build-info.txt
-          echo "- 分支: ${{ github.ref_name }}" >> build-info.txt
-          cat build-info.txt
+          echo "## 构建信息" > build-info-${{ matrix.python-version }}.txt
+          echo "- 平台: Linux (manylinux2014)" >> build-info-${{ matrix.python-version }}.txt
+          echo "- Python 版本: ${{ matrix.python-version }}" >> build-info-${{ matrix.python-version }}.txt
+          echo "- 构建时间: $(date)" >> build-info-${{ matrix.python-version }}.txt
+          echo "- Commit: ${{ github.sha }}" >> build-info-${{ matrix.python-version }}.txt
+          echo "- 分支: ${{ github.ref_name }}" >> build-info-${{ matrix.python-version }}.txt
       
       - name: 📤 上传构建信息
         uses: actions/upload-artifact@v4
         with:
-          name: build-info
-          path: build-info.txt
+          name: build-info-${{ matrix.python-version }}
+          path: build-info-${{ matrix.python-version }}.txt
           retention-days: 30
 
   # 可选：自动创建 Release（仅在打 tag 时）
@@ -87,18 +90,15 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     
     steps:
-      - name: 📥 下载 wheel
+      - name: 📥 下载所有 wheels
         uses: actions/download-artifact@v4
         with:
-          name: linux-python312-wheel
+          pattern: linux-python*-wheel
           path: wheels
+          merge-multiple: true
       
       - name: 📦 创建 Release
         uses: softprops/action-gh-release@v1
         with:
           files: wheels/*.whl
           draft: false
-          prerelease: false
-          generate_release_notes: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
