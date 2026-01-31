@@ -78,6 +78,7 @@ impl BatchRunner {
     timeout_secs=0,
     cookie_store_enable=true,
     ema_alpha=0f64,
+    data_pool=None,
     ))]
     fn run(
         &self,
@@ -93,6 +94,7 @@ impl BatchRunner {
         timeout_secs: u64,
         cookie_store_enable: bool,
         ema_alpha: f64,
+        data_pool: Option<Py<PyDict>>,
     ) -> PyResult<Py<PyAny>> {
         let stream_clone = self.stream.clone();
         let task_handle_clone = self.task_handle.clone();
@@ -104,6 +106,8 @@ impl BatchRunner {
         let step_opt = utils::parse_step_options::new(py, step_option)
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
         let setup_opts = utils::parse_setup_options::new(py, setup_options)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+        let data_pool_opt = utils::parse_data_pool::new(py, data_pool)
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
 
         let fut = async move {
@@ -126,6 +130,7 @@ impl BatchRunner {
                     assert_channel_buffer_size,
                     ema_alpha,
                     Some(engine_should_stop_clone),
+                    data_pool_opt,
                 )
                     .await;
                 *stream_clone.lock().await = Some(stream);
@@ -238,6 +243,14 @@ impl BatchRunner {
                                 test_result.total_concurrent_number,
                             )?;
                             dict.set_item("errors_per_second", test_result.errors_per_second)?;
+                            // 数据池统计
+                            if let Some(ref dp_stats) = test_result.data_pool_stats {
+                                let dp_dict = PyDict::new(py);
+                                dp_dict.set_item("total_rows", dp_stats.total_rows)?;
+                                dp_dict.set_item("mode", &dp_stats.mode)?;
+                                dp_dict.set_item("cycles", dp_stats.cycles)?;
+                                dict.set_item("data_pool_stats", dp_dict)?;
+                            }
                         };
                         Ok(Some(dict.into_any().unbind()))
                     }

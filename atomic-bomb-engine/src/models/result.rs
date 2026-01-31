@@ -1,4 +1,5 @@
 use crate::models::assert_error_stats::AssertErrKey;
+use crate::models::data_pool::DataPoolStats;
 use crate::models::http_error_stats::HttpErrKey;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -62,6 +63,8 @@ pub struct BatchResult {
     pub api_results: Vec<ApiResult>,
     // 每秒错误数
     pub errors_per_second: usize,
+    // 数据池统计
+    pub data_pool_stats: Option<DataPoolStats>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

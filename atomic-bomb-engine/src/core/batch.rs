@@ -23,6 +23,7 @@ use crate::core::sleep_guard::SleepGuard;
 use crate::core::{listening_assert, setup, share_result, start_task};
 use crate::models::api_endpoint::ApiEndpoint;
 use crate::models::assert_error_stats::AssertErrorStats;
+use crate::models::data_pool::DataPool;
 use crate::models::http_error_stats::HttpErrorStats;
 use crate::models::result::{ApiResult, BatchResult};
 use crate::models::setup::SetupApiEndpoint;
@@ -42,6 +43,7 @@ pub async fn batch(
     mut assert_channel_buffer_size: usize,
     ema_alpha: f64,
     should_stop: Option<Arc<std::sync::atomic::AtomicBool>>,
+    data_pool: Option<Arc<DataPool>>,
 ) -> anyhow::Result<BatchResult> {
     // 阻止电脑休眠
     let _guard = SleepGuard::new(should_prevent);
@@ -167,6 +169,12 @@ pub async fn batch(
     let mut is_need_render_template = false;
     // 全局提取字典
     let mut extract_map: BTreeMap<String, Value> = BTreeMap::new();
+    // 数据池
+    let data_pool_arc = data_pool.clone();
+    // 如果有数据池，设置需要渲染模板
+    if data_pool_arc.is_some() {
+        is_need_render_template = true;
+    }
     // 停止信号
     let should_stop_flag = should_stop.unwrap_or_else(|| Arc::new(AtomicBool::new(false)));
     // 创建http客户端
@@ -321,6 +329,7 @@ pub async fn batch(
                     verbose,                              // 是否打印详情
                     index,                                // 索引
                     Arc::clone(&should_stop_flag),        // 停止信号
+                    data_pool_arc.clone(),                // 数据池
                 ));
             handles.push(handle);
         }
@@ -426,6 +435,8 @@ pub async fn batch(
         .unwrap_or_else(|| 0f64);
     // 将增量累加
     number_of_last_requests.fetch_add(rps as usize, Ordering::Relaxed);
+    // 数据池统计
+    let data_pool_stats = data_pool.as_ref().map(|dp| dp.get_stats());
     // 最终结果
     let result = Ok(BatchResult {
         total_duration,
@@ -462,6 +473,7 @@ pub async fn batch(
         total_concurrent_number: total_concurrent_number_clone,
         api_results: api_results.to_vec().clone(),
         errors_per_second,
+        data_pool_stats,
     });
     should_stop_tx.send(()).unwrap();
     eprintln!("测试完成！");

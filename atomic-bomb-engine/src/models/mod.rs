@@ -2,6 +2,7 @@ pub mod api_endpoint;
 pub mod assert_error_stats;
 pub mod assert_option;
 pub(crate) mod assert_task;
+pub mod data_pool;
 pub mod http_error_stats;
 pub mod multipart_option;
 pub mod result;

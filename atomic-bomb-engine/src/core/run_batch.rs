@@ -2,10 +2,12 @@ use tokio::sync::mpsc;
 
 use crate::core::batch;
 use crate::models::api_endpoint::ApiEndpoint;
+use crate::models::data_pool::DataPool;
 use crate::models::result::BatchResult;
 use crate::models::setup::SetupApiEndpoint;
 use crate::models::step_option::StepOption;
 use futures::stream::{BoxStream, StreamExt};
+use std::sync::Arc;
 
 pub async fn run_batch(
     test_duration_secs: u64,
@@ -20,6 +22,7 @@ pub async fn run_batch(
     assert_channel_buffer_size: usize,
     ema_alpha: f64,
     should_stop: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    data_pool: Option<Arc<DataPool>>,
 ) -> BoxStream<'static, Result<Option<BatchResult>, anyhow::Error>> {
     let (sender, receiver) = mpsc::channel(1024);
 
@@ -38,6 +41,7 @@ pub async fn run_batch(
             assert_channel_buffer_size,
             ema_alpha,
             should_stop,
+            data_pool,
         )
         .await;
 
@@ -139,6 +143,8 @@ mod tests {
             None,
             4096,
             0f64,
+            None,
+            None,
         )
         .await;
 

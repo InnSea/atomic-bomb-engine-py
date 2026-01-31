@@ -28,6 +28,10 @@ fn atomic_bomb_engine(m: &Bound<'_, PyModule>) -> PyResult<()> {
         py_lib::multipart_option_func::multipart_option,
         m
     )?)?;
+    m.add_function(wrap_pyfunction!(
+        py_lib::data_pool_func::data_pool_option,
+        m
+    )?)?;
     m.add_class::<py_lib::batch_runner::BatchRunner>()?;
     Ok(())
 }

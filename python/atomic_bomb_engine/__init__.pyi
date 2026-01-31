@@ -101,6 +101,35 @@ def multipart_option(
     :param mime: 文件类型，e.g: application/octet-stream,可以参考:https://developer.mozilla.org/zh-CN/docs/Web/HTTP/Basics_of_HTTP/MIME_types/Common_types
     """
 
+def data_pool_option(
+        file_path: str,
+        mode: str = "sequential") -> Dict[str, Any]:
+    """
+    数据池配置，用于参数化测试
+    CSV文件格式：第一行为字段名（逗号分隔），后续行为数据值
+    在请求参数中使用 {{字段名}} 来引用数据池中的值
+    
+    :param file_path: CSV文件路径
+    :param mode: 读取模式
+        - "sequential": 循环顺序读取（默认），数据用完后从头开始
+        - "random": 随机读取
+    :return: 数据池配置字典
+    
+    示例CSV文件:
+        username,password,age
+        user1,pass1,20
+        user2,pass2,25
+        
+    使用方式:
+        endpoint(
+            name="登录",
+            url="http://api.example.com/login",
+            method="POST",
+            weight=1,
+            json={"username": "{{username}}", "password": "{{password}}"}
+        )
+    """
+
 class BatchRunner:
     def __init__(self) -> None:
         ...
@@ -118,6 +147,7 @@ class BatchRunner:
              timeout_secs=0,
              cookie_store_enable=True,
              ema_alpha: float=0,
+             data_pool: Dict[str, Any]|None=None,
     ) -> None:
         """
             批量压测
@@ -132,6 +162,7 @@ class BatchRunner:
             :param timeout_secs: http超时时间
             :param cookie_store_enable: 是否为客户端启用持久性cookie存储。
             :param ema_alpha: 指数滑动平均参数，0-1之间,0为不使用，值越大曲线越平滑，但是越失真，建议使用0.1以下
+            :param data_pool: 数据池配置，使用data_pool_option()函数创建
         """
         ...
 

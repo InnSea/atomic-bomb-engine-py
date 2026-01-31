@@ -1,5 +1,6 @@
 pub(crate) mod assert_option_func;
 pub(crate) mod batch_runner;
+pub(crate) mod data_pool_func;
 pub(crate) mod endpoint_func;
 pub(crate) mod jsonpath_extract_func;
 pub(crate) mod multipart_option_func;

@@ -3,6 +3,7 @@ use crate::core::setup;
 use crate::models::api_endpoint::ApiEndpoint;
 use crate::models::assert_error_stats::AssertErrorStats;
 use crate::models::assert_task::AssertTask;
+use crate::models::data_pool::DataPool;
 use crate::models::http_error_stats::HttpErrorStats;
 use crate::models::result::ApiResult;
 use anyhow::Error;
@@ -56,6 +57,7 @@ pub(crate) async fn start_concurrency(
     verbose: bool,
     index: usize,
     should_stop: Arc<std::sync::atomic::AtomicBool>,
+    data_pool: Option<Arc<DataPool>>,
 ) -> Result<(), Error> {
     let mut is_need_render = is_need_render_template;
     let semaphore = controller_arc.get_semaphore();
@@ -74,6 +76,13 @@ pub(crate) async fn start_concurrency(
         let mut api_extract_b_tree_map = BTreeMap::new();
         // 将全局字典加入到api字典
         api_extract_b_tree_map.extend(extract_map_arc.lock().await.clone());
+        // 从数据池获取数据并加入到api字典
+        if let Some(ref pool) = data_pool {
+            let row_data = pool.get_next_row();
+            for (key, value) in row_data {
+                api_extract_b_tree_map.insert(key, Value::String(value));
+            }
+        }
         // 接口初始化副本
         let api_setup_clone = endpoint_arc.lock().await.setup_options.clone();
         // 接口前置初始化

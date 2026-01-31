@@ -180,6 +180,7 @@ pub(crate) async fn collect_results(
                 total_concurrent_number,
                 api_results: api_results.to_vec().clone(),
                 errors_per_second,
+                data_pool_stats: None, // 中间结果不包含数据池统计
                 };
                 let elapsed = test_start.elapsed();
                 if verbose {
