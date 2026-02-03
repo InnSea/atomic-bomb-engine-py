@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ['3.14']
+        python-version: ['3.13', '3.14']
 
     steps:
       - name: 签出rust代码
@@ -65,5 +65,5 @@ jobs:
       - name: 上传wheels作为artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: wheels
+          name: wheels-python${{ matrix.python-version }}
           path: target/wheels/*.whl
