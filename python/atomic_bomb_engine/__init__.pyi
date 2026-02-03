@@ -28,7 +28,7 @@ def endpoint(
          url: str,
          method: str,
          weight: int,
-         json: Dict | None = None,
+         json: Dict | str | None = None,
          form_data: Dict | None = None,
          multipart_options: List[Dict]| None = None,
          headers: Dict | None = None,
@@ -45,7 +45,10 @@ def endpoint(
     :param url: 接口地址
     :param method: 请求方法
     :param weight 权重
-    :param json: 请求json
+    :param json: 请求json，支持两种格式：
+        - Dict: 字典对象，如 {"name": "{{username}}"}
+        - str: JSON字符串，支持非字符串类型的模板变量，如 '{"id": {{userId}}}' 
+               其中 {{userId}} 会被替换为整数而不是字符串
     :param form_data: 请求form表单
     :multipart_options: 附件
     :param headers: 请求头

@@ -4,7 +4,7 @@ use crate::utils::depythonize::depythonize;
 use atomic_bomb_engine::models;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList, PyListMethods};
+use pyo3::types::{PyDict, PyList, PyListMethods, PyString};
 use serde_json::Value;
 
 pub fn new(
@@ -36,10 +36,19 @@ pub fn new(
                     .ok_or_else(|| PyErr::new::<PyRuntimeError, _>("method不能为空".to_string()))?
                     .extract()?;
 
-                let json: Option<Value> = dict
-                    .get_item("json")?
-                    .map(|value| depythonize(&value))
-                    .transpose()?;
+                let json: Option<Value> = match dict.get_item("json")? {
+                    Some(value) => {
+                        if value.is_instance_of::<PyString>() {
+                            let s: String = value.extract()?;
+                            Some(Value::String(s))
+                        } else if value.is_none() {
+                            None
+                        } else {
+                            Some(depythonize(&value)?)
+                        }
+                    }
+                    None => None,
+                };
 
                 let form_data: Option<HashMap<String, String>> = dict
                     .get_item("form_data")?

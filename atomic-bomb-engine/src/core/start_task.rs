@@ -192,33 +192,56 @@ pub(crate) async fn start_concurrency(
         request = request.headers(headers);
         // 构建json请求
         if let Some(json_value) = json_obj_clone {
+            let json_source = if json_value.is_string() {
+                json_value.as_str().unwrap().to_string()
+            } else {
+                json_value.to_string()
+            };
+            
             let json_val = match is_need_render_template {
                 true => {
-                    // 将json转为字符串，并且将模版填充
+                    // 模板替换
                     let handlebars = Handlebars::new();
                     let json_string = match handlebars
-                        .render_template(&*json_value.to_string(), &json!(api_extract_b_tree_map))
+                        .render_template(&json_source, &json!(api_extract_b_tree_map))
                     {
                         Ok(j) => j,
                         Err(e) => {
                             eprintln!("{:?}", e);
-                            json_value.to_string()
+                            json_source.clone()
                         }
                     };
-                    match Value::from_str(&*json_string) {
+                    match Value::from_str(&json_string) {
                         Ok(val) => val,
                         Err(e) => {
                             return Err(Error::msg(format!(
                                 "转换json失败:{:?}, 原始json: {:?}",
                                 e,
-                                json_string.to_string()
+                                json_string
                             )))
                         }
                     }
                 }
-                false => json_value,
+                false => {
+                    // 不需要模板替换
+                    if json_value.is_string() {
+                        // 如果是字符串，需要解析
+                        match Value::from_str(&json_source) {
+                            Ok(val) => val,
+                            Err(e) => {
+                                return Err(Error::msg(format!(
+                                    "转换json失败:{:?}, 原始json: {:?}",
+                                    e,
+                                    json_source
+                                )))
+                            }
+                        }
+                    } else {
+                        // 如果是对象，直接使用
+                        json_value
+                    }
+                }
             };
-            // println!("{:?}", json_val);
             if verbose {
                 println!("json:{:?}", json_val);
             };

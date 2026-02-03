@@ -70,23 +70,27 @@ pub async fn start_setup(
         request = request.headers(headers);
         // 构建json请求
         if let Some(json_value) = option.json {
+            let json_source = if json_value.is_string() {
+                json_value.as_str().unwrap().to_string()
+            } else {
+                json_value.to_string()
+            };
             let handlebars = Handlebars::new();
             let json_string =
-                match handlebars.render_template(&*json_value.to_string(), &json!(extract_map)) {
+                match handlebars.render_template(&json_source, &json!(extract_map)) {
                     Ok(j) => j,
                     Err(e) => {
                         eprintln!("{:?}", e);
-                        json_value.to_string()
+                        json_source.clone()
                     }
                 };
-            // println!("{:?}",json_string);
-            let json_val = match Value::from_str(&*json_string) {
+            let json_val = match Value::from_str(&json_string) {
                 Ok(val) => val,
                 Err(e) => {
                     return Err(Error::msg(format!(
                         "转换json失败:{:?},原始json: {:?}",
                         e,
-                        json_string.to_string()
+                        json_string
                     )))
                 }
             };

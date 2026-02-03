@@ -98,6 +98,7 @@ mod tests {
             method: "POST".to_string(),
             weight: 100,
             json: Some(json!({"name": "test","number": 10086})),
+            json_str: None,
             headers: None,
             cookies: None,
             form_data: None,
