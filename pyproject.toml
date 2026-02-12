@@ -16,9 +16,7 @@ classifiers = [
     "Programming Language :: Rust",
     "Operating System :: OS Independent",
 ]
-authors = [{name = "qyzhg", email = "qyzhg@qyzhg.com"}]
-dependencies = ["aiohttp", "aiosqlite"]
-
+dependencies = []
 
 [tool.maturin]
 name = "atomic_bomb_engine"
