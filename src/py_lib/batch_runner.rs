@@ -79,6 +79,7 @@ impl BatchRunner {
     cookie_store_enable=true,
     ema_alpha=0f64,
     data_pool=None,
+    global_variables=None,
     ))]
     fn run(
         &self,
@@ -95,6 +96,7 @@ impl BatchRunner {
         cookie_store_enable: bool,
         ema_alpha: f64,
         data_pool: Option<Py<PyDict>>,
+        global_variables: Option<Py<PyDict>>,
     ) -> PyResult<Py<PyAny>> {
         let stream_clone = self.stream.clone();
         let task_handle_clone = self.task_handle.clone();
@@ -108,6 +110,8 @@ impl BatchRunner {
         let setup_opts = utils::parse_setup_options::new(py, setup_options)
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
         let data_pool_opt = utils::parse_data_pool::new(py, data_pool)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+        let global_vars = utils::parse_global_variables::new(py, global_variables)
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
 
         let fut = async move {
@@ -131,6 +135,7 @@ impl BatchRunner {
                     ema_alpha,
                     Some(engine_should_stop_clone),
                     data_pool_opt,
+                    global_vars,
                 )
                     .await;
                 *stream_clone.lock().await = Some(stream);

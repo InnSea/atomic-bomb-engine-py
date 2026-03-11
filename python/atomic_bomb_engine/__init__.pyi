@@ -1,4 +1,4 @@
-from typing import Iterator, Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any
 
 def assert_option(jsonpath: str, reference_object: any) -> Dict[str, Any]:
     """
@@ -6,7 +6,6 @@ def assert_option(jsonpath: str, reference_object: any) -> Dict[str, Any]:
     :param jsonpath: jsonpath取值地址
     :param reference_object: 断言的值
     """
-
 
 def step_option(increase_step: int, increase_interval: int) -> Dict[str, int]:
     """
@@ -24,19 +23,19 @@ def think_time_option(min_millis: int, max_millis: int) -> Dict[str, int]:
     """
 
 def endpoint(
-         name: str,
-         url: str,
-         method: str,
-         weight: int,
-         json: Dict | str | None = None,
-         form_data: Dict | None = None,
-         multipart_options: List[Dict]| None = None,
-         headers: Dict | None = None,
-         cookies: str | None = None,
-         assert_options: List | None = None,
-         think_time_option: Dict[str, int] | None = None,
-         setup_options: List| None = None,
-         ) -> Dict[str, Any]:
+    name: str,
+    url: str,
+    method: str,
+    weight: int,
+    json: Dict | str | None = None,
+    form_data: Dict | None = None,
+    multipart_options: List[Dict] | None = None,
+    headers: Dict | None = None,
+    cookies: str | None = None,
+    assert_options: List | None = None,
+    think_time_option: Dict[str, int] | None = None,
+    setup_options: List | None = None,
+) -> Dict[str, Any]:
     """
     生成endpoint
     :param assert_options:
@@ -47,7 +46,7 @@ def endpoint(
     :param weight 权重
     :param json: 请求json，支持两种格式：
         - Dict: 字典对象，如 {"name": "{{username}}"}
-        - str: JSON字符串，支持非字符串类型的模板变量，如 '{"id": {{userId}}}' 
+        - str: JSON字符串，支持非字符串类型的模板变量，如 '{"id": {{userId}}}'
                其中 {{userId}} 会被替换为整数而不是字符串
     :param form_data: 请求form表单
     :multipart_options: 附件
@@ -58,17 +57,17 @@ def endpoint(
     :param setup_options: 接口初始化选项
     """
 
-
 def setup_option(
-        name: str,
-        url: str,
-        method: str,
-        json: Dict| None = None,
-        form_data: Dict| None = None,
-        multipart_options: List[Dict]| None = None,
-        headers: Dict| None = None,
-        cookies: str | None = None,
-        jsonpath_extract: List| None = None) ->Dict[str, Any]:
+    name: str,
+    url: str,
+    method: str,
+    json: Dict | None = None,
+    form_data: Dict | None = None,
+    multipart_options: List[Dict] | None = None,
+    headers: Dict | None = None,
+    cookies: str | None = None,
+    jsonpath_extract: List | None = None,
+) -> Dict[str, Any]:
     """
     初始化选项
     :param name: 接口名称
@@ -91,11 +90,7 @@ def jsonpath_extract_option(key: str, jsonpath: str) -> Dict[str, str]:
     :return:
     """
 
-def multipart_option(
-        form_key: str,
-        path: str,
-        file_name: str,
-        mime: str) -> Dict:
+def multipart_option(form_key: str, path: str, file_name: str, mime: str) -> Dict:
     """
     上传附件选项
     :param form_key: form表单的key，根据服务端选择，e.g: file， file1
@@ -104,25 +99,23 @@ def multipart_option(
     :param mime: 文件类型，e.g: application/octet-stream,可以参考:https://developer.mozilla.org/zh-CN/docs/Web/HTTP/Basics_of_HTTP/MIME_types/Common_types
     """
 
-def data_pool_option(
-        file_path: str,
-        mode: str = "sequential") -> Dict[str, Any]:
+def data_pool_option(file_path: str, mode: str = "sequential") -> Dict[str, Any]:
     """
     数据池配置，用于参数化测试
     CSV文件格式：第一行为字段名（逗号分隔），后续行为数据值
     在请求参数中使用 {{字段名}} 来引用数据池中的值
-    
+
     :param file_path: CSV文件路径
     :param mode: 读取模式
         - "sequential": 循环顺序读取（默认），数据用完后从头开始
         - "random": 随机读取
     :return: 数据池配置字典
-    
+
     示例CSV文件:
         username,password,age
         user1,pass1,20
         user2,pass2,25
-        
+
     使用方式:
         endpoint(
             name="登录",
@@ -134,50 +127,42 @@ def data_pool_option(
     """
 
 class BatchRunner:
-    def __init__(self) -> None:
-        ...
-
+    def __init__(self) -> None: ...
     def run(
-            self,
-             test_duration_secs: int,
-             concurrent_requests: int,
-             api_endpoints:List[Dict],
-             step_option:Dict[str, int]|None=None,
-             setup_options:List[Dict[str, Any]]|None=None,
-             verbose:bool=False,
-             should_prevent:bool=False,
-             assert_channel_buffer_size:int=1024,
-             timeout_secs=0,
-             cookie_store_enable=True,
-             ema_alpha: float=0,
-             data_pool: Dict[str, Any]|None=None,
+        self,
+        test_duration_secs: int,
+        concurrent_requests: int,
+        api_endpoints: List[Dict],
+        step_option: Dict[str, int] | None = None,
+        setup_options: List[Dict[str, Any]] | None = None,
+        verbose: bool = False,
+        should_prevent: bool = False,
+        assert_channel_buffer_size: int = 1024,
+        timeout_secs=0,
+        cookie_store_enable=True,
+        ema_alpha: float = 0,
+        data_pool: Dict[str, Any] | None = None,
+        global_variables: Dict[str, Any] | None = None,
     ) -> None:
         """
-            批量压测
-            :param test_duration_secs: 测试持续时间
-            :param concurrent_requests: 并发数
-            :param api_endpoints: 接口信息
-            :param step_option: 阶梯加压选项
-            :param setup_options: 初始化选项
-            :param verbose: 打印详细信息
-            :param should_prevent: 是否禁用睡眠
-            :param assert_channel_buffer_size: 断言队列buffer大小
-            :param timeout_secs: http超时时间
-            :param cookie_store_enable: 是否为客户端启用持久性cookie存储。
-            :param ema_alpha: 指数滑动平均参数，0-1之间,0为不使用，值越大曲线越平滑，但是越失真，建议使用0.1以下
-            :param data_pool: 数据池配置，使用data_pool_option()函数创建
+        批量压测
+        :param test_duration_secs: 测试持续时间
+        :param concurrent_requests: 并发数
+        :param api_endpoints: 接口信息
+        :param step_option: 阶梯加压选项
+        :param setup_options: 初始化选项
+        :param verbose: 打印详细信息
+        :param should_prevent: 是否禁用睡眠
+        :param assert_channel_buffer_size: 断言队列buffer大小
+        :param timeout_secs: http超时时间
+        :param cookie_store_enable: 是否为客户端启用持久性cookie存储。
+        :param ema_alpha: 指数滑动平均参数，0-1之间,0为不使用，值越大曲线越平滑，但是越失真，建议使用0.1以下
+        :param data_pool: 数据池配置，使用data_pool_option()函数创建
+        :param global_variables: 全局变量字典，在所有接口中可通过 {{key}} 模板语法引用。
+            优先级：全局变量 < 全局setup提取 < CSV数据池 < 接口级setup提取
         """
         ...
 
-    def stop(self) -> None:
-        """
-            立即停止当前正在运行的压测
-            调用此方法会立即停止压测，不会再产生新的请求结果
-        """
-        ...
-
-    def __iter__(self) -> 'BatchRunner':
-        ...
-
-    def __next__(self) -> Optional[Any]:
-        ...
+    def stop(self) -> None: ...
+    def __iter__(self) -> "BatchRunner": ...
+    def __next__(self) -> Optional[Any]: ...

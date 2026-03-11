@@ -44,6 +44,7 @@ pub async fn batch(
     ema_alpha: f64,
     should_stop: Option<Arc<std::sync::atomic::AtomicBool>>,
     data_pool: Option<Arc<DataPool>>,
+    global_variables: Option<BTreeMap<String, Value>>,
 ) -> anyhow::Result<BatchResult> {
     // 阻止电脑休眠
     let _guard = SleepGuard::new(should_prevent);
@@ -169,6 +170,11 @@ pub async fn batch(
     let mut is_need_render_template = false;
     // 全局提取字典
     let mut extract_map: BTreeMap<String, Value> = BTreeMap::new();
+    // 注入全局变量
+    if let Some(vars) = global_variables {
+        extract_map.extend(vars);
+        is_need_render_template = true;
+    }
     // 数据池
     let data_pool_arc = data_pool.clone();
     // 如果有数据池，设置需要渲染模板

@@ -7,6 +7,8 @@ use crate::models::result::BatchResult;
 use crate::models::setup::SetupApiEndpoint;
 use crate::models::step_option::StepOption;
 use futures::stream::{BoxStream, StreamExt};
+use serde_json::Value;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 pub async fn run_batch(
@@ -23,6 +25,7 @@ pub async fn run_batch(
     ema_alpha: f64,
     should_stop: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     data_pool: Option<Arc<DataPool>>,
+    global_variables: Option<BTreeMap<String, Value>>,
 ) -> BoxStream<'static, Result<Option<BatchResult>, anyhow::Error>> {
     let (sender, receiver) = mpsc::channel(1024);
 
@@ -42,6 +45,7 @@ pub async fn run_batch(
             ema_alpha,
             should_stop,
             data_pool,
+            global_variables,
         )
         .await;
 
@@ -98,7 +102,6 @@ mod tests {
             method: "POST".to_string(),
             weight: 100,
             json: Some(json!({"name": "test","number": 10086})),
-            json_str: None,
             headers: None,
             cookies: None,
             form_data: None,
@@ -144,6 +147,7 @@ mod tests {
             None,
             4096,
             0f64,
+            None,
             None,
             None,
         )
