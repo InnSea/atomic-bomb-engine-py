@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::env;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -76,9 +76,9 @@ pub async fn batch(
     // 请求总数统计
     let total_requests = Arc::new(AtomicUsize::new(0));
     // 统计最大响应时间
-    let max_response_time = Arc::new(Mutex::new(0u64));
+    let max_response_time = Arc::new(AtomicU64::new(0));
     // 统计最小响应时间
-    let min_response_time = Arc::new(Mutex::new(u64::MAX));
+    let min_response_time = Arc::new(AtomicU64::new(u64::MAX));
     // 统计错误数量
     let err_count = Arc::new(AtomicUsize::new(0));
     // 统计每秒错误数
@@ -252,9 +252,9 @@ pub async fn batch(
         // 接口请求总数统计
         let api_total_requests = Arc::new(AtomicUsize::new(0));
         // 接口统计最大响应时间
-        let api_max_response_time = Arc::new(Mutex::new(0u64));
+        let api_max_response_time = Arc::new(AtomicU64::new(0));
         // 接口统计最小响应时间
-        let api_min_response_time = Arc::new(Mutex::new(u64::MAX));
+        let api_min_response_time = Arc::new(AtomicU64::new(u64::MAX));
         // 接口统计错误数量
         let api_err_count = Arc::new(AtomicUsize::new(0));
         // 接口并发数统计
@@ -462,8 +462,8 @@ pub async fn batch(
         },
         total_requests,
         rps,
-        max_response_time: *max_response_time.lock().await,
-        min_response_time: *min_response_time.lock().await,
+        max_response_time: max_response_time.load(Ordering::SeqCst),
+        min_response_time: min_response_time.load(Ordering::SeqCst),
         err_count: err_count_clone.load(Ordering::SeqCst) as i32,
         total_data_kb: total_response_size_kb,
         throughput_per_second_kb: throughput_kb_s,

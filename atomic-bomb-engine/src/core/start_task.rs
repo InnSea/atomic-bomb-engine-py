@@ -18,7 +18,7 @@ use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::error::Error as std_error;
 use std::str::FromStr;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
@@ -36,10 +36,10 @@ pub(crate) async fn start_concurrency(
     api_total_requests_arc: Arc<AtomicUsize>,
     histogram_arc: Arc<Mutex<Histogram>>,
     api_histogram_arc: Arc<Mutex<Histogram>>,
-    max_response_time_arc: Arc<Mutex<u64>>,
-    api_max_response_time_arc: Arc<Mutex<u64>>,
-    min_response_time_arc: Arc<Mutex<u64>>,
-    api_min_response_time_arc: Arc<Mutex<u64>>,
+    max_response_time_arc: Arc<AtomicU64>,
+    api_max_response_time_arc: Arc<AtomicU64>,
+    min_response_time_arc: Arc<AtomicU64>,
+    api_min_response_time_arc: Arc<AtomicU64>,
     total_response_size_arc: Arc<AtomicUsize>,
     api_total_response_size_arc: Arc<AtomicUsize>,
     api_err_count_arc: Arc<AtomicUsize>,
@@ -59,9 +59,41 @@ pub(crate) async fn start_concurrency(
     should_stop: Arc<std::sync::atomic::AtomicBool>,
     data_pool: Option<Arc<DataPool>>,
 ) -> Result<(), Error> {
+    fn atomic_max(atomic: &AtomicU64, val: u64) {
+        let mut current = atomic.load(Ordering::Relaxed);
+        while val > current {
+            match atomic.compare_exchange_weak(current, val, Ordering::Relaxed, Ordering::Relaxed) {
+                Ok(_) => break,
+                Err(actual) => current = actual,
+            }
+        }
+    }
+    fn atomic_min(atomic: &AtomicU64, val: u64) {
+        let mut current = atomic.load(Ordering::Relaxed);
+        while val < current {
+            match atomic.compare_exchange_weak(current, val, Ordering::Relaxed, Ordering::Relaxed) {
+                Ok(_) => break,
+                Err(actual) => current = actual,
+            }
+        }
+    }
+
     let mut is_need_render = is_need_render_template;
     let semaphore = controller_arc.get_semaphore();
     let _permit = semaphore.acquire().await.expect("获取信号量许可失败");
+
+    let endpoint_snapshot = endpoint_arc.lock().await.clone();
+    let api_name_clone = endpoint_snapshot.name.clone();
+    let method_clone = endpoint_snapshot.method.clone();
+    let json_obj_base = endpoint_snapshot.json.clone();
+    let form_data_base = endpoint_snapshot.form_data.clone();
+    let multipart_base = endpoint_snapshot.multipart_options.clone();
+    let headers_base = endpoint_snapshot.headers.clone();
+    let cookie_base = endpoint_snapshot.cookies.clone();
+    let assert_options_base = endpoint_snapshot.assert_options.clone();
+    let think_time_base = endpoint_snapshot.think_time_option.clone();
+    let api_setup_base = endpoint_snapshot.setup_options.clone();
+    let endpoint_url = endpoint_snapshot.url.clone();
     // 统计并发数
     // 将接口并发数+1并返回当前并发数
     let api_current_concurrency =
@@ -84,7 +116,7 @@ pub(crate) async fn start_concurrency(
             }
         }
         // 接口初始化副本
-        let api_setup_clone = endpoint_arc.lock().await.setup_options.clone();
+        let api_setup_clone = api_setup_base.clone();
         // 接口前置初始化
         if let Some(setup_options) = api_setup_clone {
             is_need_render = true;
@@ -103,7 +135,7 @@ pub(crate) async fn start_concurrency(
                 Err(e) => {
                     eprintln!(
                         "接口-{:?}初始化失败,1秒后重试!!: {:?}",
-                        endpoint_arc.lock().await.name.clone(),
+                        api_name_clone.clone(),
                         e.to_string()
                     );
                     tokio::time::sleep(Duration::from_secs(1)).await;
@@ -111,24 +143,20 @@ pub(crate) async fn start_concurrency(
                 }
             };
         }
-        // api名称副本
-        let api_name_clone = endpoint_arc.lock().await.name.clone();
-        // 请求方法副本
-        let method_clone = endpoint_arc.lock().await.method.clone();
         // json副本
-        let json_obj_clone = endpoint_arc.lock().await.json.clone();
+        let json_obj_clone = json_obj_base.clone();
         // form副本
-        let form_data_clone = endpoint_arc.lock().await.form_data.clone();
+        let form_data_clone = form_data_base.clone();
         // multipart副本
-        let multipart_clone = endpoint_arc.lock().await.multipart_options.clone();
+        let multipart_clone = multipart_base.clone();
         // headers副本
-        let headers_clone = endpoint_arc.lock().await.headers.clone();
+        let headers_clone = headers_base.clone();
         // cookie副本
-        let cookie_clone = endpoint_arc.lock().await.cookies.clone();
+        let cookie_clone = cookie_base.clone();
         // 断言副本
-        let assert_options_clone = endpoint_arc.lock().await.assert_options.clone();
+        let assert_options_clone = assert_options_base.clone();
         // 思考时间副本
-        let think_time_clone = endpoint_arc.lock().await.think_time_option.clone();
+        let think_time_clone = think_time_base.clone();
         // 构建请求方式
         let method = match Method::from_str(&method_clone.to_uppercase()) {
             Ok(m) => m,
@@ -137,7 +165,7 @@ pub(crate) async fn start_concurrency(
             }
         };
         // 构建请求
-        let mut request = client.request(method, endpoint_arc.lock().await.url.clone());
+        let mut request = client.request(method, endpoint_url.clone());
         // 构建请求头
         let mut headers = HeaderMap::new();
         if let Some(headers_map) = headers_clone {
@@ -348,18 +376,14 @@ pub(crate) async fn start_concurrency(
                         let duration = start.elapsed().as_millis() as u64;
                         // api统计桶
                         let mut api_histogram = api_histogram_arc.lock().await;
-                        // 最大请求时间
-                        let mut max_rt = max_response_time_arc.lock().await;
-                        *max_rt = (*max_rt).max(duration);
+                        // 最大请求时间（无锁原子操作）
+                        atomic_max(&max_response_time_arc, duration);
                         // api最大请求时间
-                        let mut api_max_rt = api_max_response_time_arc.lock().await;
-                        *api_max_rt = (*api_max_rt).max(duration);
+                        atomic_max(&api_max_response_time_arc, duration);
                         // 最小响应时间
-                        let mut min_rt = min_response_time_arc.lock().await;
-                        *min_rt = (*min_rt).min(duration);
+                        atomic_min(&min_response_time_arc, duration);
                         // api最小响应时间
-                        let mut api_min_rt = api_min_response_time_arc.lock().await;
-                        *api_min_rt = (*api_min_rt).min(duration);
+                        atomic_min(&api_min_response_time_arc, duration);
                         // 将数据放入全局统计桶
                         if let Err(e) = histogram_arc.lock().await.increment(duration) {
                             eprintln!("histogram设置数据错误:{:?}", e)
@@ -439,7 +463,7 @@ pub(crate) async fn start_concurrency(
                                         api_err_count: api_err_count_arc.clone(),
                                         assert_errors: assert_errors_arc.clone(),
                                         endpoint: endpoint_arc.clone(),
-                                        api_name: endpoint_arc.lock().await.name.clone(),
+                                        api_name: api_name_clone.clone(),
                                         successful_requests: successful_requests_arc.clone(),
                                         api_successful_requests: api_successful_requests_arc
                                             .clone(),
@@ -499,8 +523,8 @@ pub(crate) async fn start_concurrency(
                                     )));
                                 }
                             };
-                            api_res.max_response_time = *api_max_rt;
-                            api_res.min_response_time = *api_min_rt;
+                            api_res.max_response_time = api_max_response_time_arc.load(Ordering::SeqCst);
+                            api_res.min_response_time = api_min_response_time_arc.load(Ordering::SeqCst);
                             api_res.total_requests = api_total_requests;
                             api_res.total_data_kb = api_total_data_kb;
                             api_res.success_rate = api_success_rate;
@@ -531,18 +555,14 @@ pub(crate) async fn start_concurrency(
                         api_err_count_arc.fetch_add(1, Ordering::Relaxed);
                         let status_code = u16::from(response.status());
                         let mut api_histogram = api_histogram_arc.lock().await;
-                        // 最大请求时间
-                        let mut max_rt = max_response_time_arc.lock().await;
-                        *max_rt = (*max_rt).max(duration);
+                        // 最大请求时间（无锁原子操作）
+                        atomic_max(&max_response_time_arc, duration);
                         // api最大请求时间
-                        let mut api_max_rt = api_max_response_time_arc.lock().await;
-                        *api_max_rt = (*api_max_rt).max(duration);
+                        atomic_max(&api_max_response_time_arc, duration);
                         // 最小响应时间
-                        let mut min_rt = min_response_time_arc.lock().await;
-                        *min_rt = (*min_rt).min(duration);
+                        atomic_min(&min_response_time_arc, duration);
                         // api最小响应时间
-                        let mut api_min_rt = api_min_response_time_arc.lock().await;
-                        *api_min_rt = (*api_min_rt).min(duration);
+                        atomic_min(&api_min_response_time_arc, duration);
                         // 将数据放入全局统计桶
                         if let Err(e) = histogram_arc.lock().await.increment(duration) {
                             eprintln!("histogram设置数据错误:{:?}", e)
@@ -634,7 +654,7 @@ pub(crate) async fn start_concurrency(
                         if verbose {
                             println!(
                                 "{:?}-HTTP 错误: 状态码 {:?}, 响应体：{:?}",
-                                endpoint_arc.lock().await.name.clone(),
+                                api_name_clone.clone(),
                                 status_code,
                                 buffer
                             )
@@ -669,8 +689,8 @@ pub(crate) async fn start_concurrency(
                                     )));
                                 }
                             };
-                            api_res.max_response_time = *api_max_rt;
-                            api_res.min_response_time = *api_min_rt;
+                            api_res.max_response_time = api_max_response_time_arc.load(Ordering::SeqCst);
+                            api_res.min_response_time = api_min_response_time_arc.load(Ordering::SeqCst);
                             api_res.total_requests = api_total_requests;
                             api_res.total_data_kb = api_total_data_kb;
                             api_res.success_rate = api_success_rate;
@@ -723,7 +743,7 @@ pub(crate) async fn start_concurrency(
                     .lock()
                     .await
                     .increment(
-                        endpoint_arc.lock().await.name.clone(),
+                        api_name_clone.clone(),
                         e.url(),
                         status_code,
                         e.to_string(),

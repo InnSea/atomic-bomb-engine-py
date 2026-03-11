@@ -5,7 +5,7 @@ use crate::models::http_error_stats::HttpErrorStats;
 use crate::models::result::{ApiResult, BatchResult};
 use histogram::Histogram;
 use std::collections::{BTreeMap, HashMap};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::select;
@@ -24,8 +24,8 @@ pub(crate) async fn collect_results(
     total_response_size: Arc<AtomicUsize>,
     http_errors: Arc<Mutex<HttpErrorStats>>,
     err_count: Arc<AtomicUsize>,
-    max_resp_time: Arc<Mutex<u64>>,
-    min_resp_time: Arc<Mutex<u64>>,
+    max_resp_time: Arc<AtomicU64>,
+    min_resp_time: Arc<AtomicU64>,
     assert_error: Arc<Mutex<AssertErrorStats>>,
     api_results: Arc<Mutex<Vec<ApiResult>>>,
     concurrent_number: Arc<AtomicUsize>,
@@ -60,8 +60,8 @@ pub(crate) async fn collect_results(
             loop{
                 interval.tick().await;
                 let err_count = err_count.load(Ordering::SeqCst) as i32;
-                let max_response_time_c = *max_resp_time.lock().await;
-                let min_response_time_c = *min_resp_time.lock().await;
+                let max_response_time_c = max_resp_time.load(Ordering::SeqCst);
+                let min_response_time_c = min_resp_time.load(Ordering::SeqCst);
                 let total_duration = (Instant::now() - test_start).as_secs_f64();
                 let mut d = dura.lock().await;
                 let this_duration = total_duration - *d;
