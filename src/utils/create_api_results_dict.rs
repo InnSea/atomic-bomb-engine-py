@@ -30,6 +30,7 @@ pub fn create_api_results_dict(py: Python<'_>, api_results: Vec<ApiResult>) -> P
         res_dict.set_item("total_data_kb", result.total_data_kb)?;
         res_dict.set_item("throughput_per_second_kb", result.throughput_per_second_kb)?;
         res_dict.set_item("concurrent_number", result.concurrent_number)?;
+        res_dict.set_item("avg_response_time", result.avg_response_time)?;
 
         results.push(res_dict.unbind());
     }

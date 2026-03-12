@@ -80,6 +80,7 @@ impl BatchRunner {
     ema_alpha=0f64,
     data_pool=None,
     global_variables=None,
+    teardown_options=None,
     ))]
     fn run(
         &self,
@@ -97,6 +98,7 @@ impl BatchRunner {
         ema_alpha: f64,
         data_pool: Option<Py<PyDict>>,
         global_variables: Option<Py<PyDict>>,
+        teardown_options: Option<Py<PyList>>,
     ) -> PyResult<Py<PyAny>> {
         let stream_clone = self.stream.clone();
         let task_handle_clone = self.task_handle.clone();
@@ -112,6 +114,8 @@ impl BatchRunner {
         let data_pool_opt = utils::parse_data_pool::new(py, data_pool)
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
         let global_vars = utils::parse_global_variables::new(py, global_variables)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+        let teardown_opts = utils::parse_setup_options::new(py, teardown_options)
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
 
         let fut = async move {
@@ -136,6 +140,7 @@ impl BatchRunner {
                     Some(engine_should_stop_clone),
                     data_pool_opt,
                     global_vars,
+                    teardown_opts,
                 )
                     .await;
                 *stream_clone.lock().await = Some(stream);
@@ -248,6 +253,7 @@ impl BatchRunner {
                                 test_result.total_concurrent_number,
                             )?;
                             dict.set_item("errors_per_second", test_result.errors_per_second)?;
+                            dict.set_item("avg_response_time", test_result.avg_response_time)?;
                             // 数据池统计
                             if let Some(ref dp_stats) = test_result.data_pool_stats {
                                 let dp_dict = PyDict::new(py);

@@ -143,6 +143,7 @@ class BatchRunner:
         ema_alpha: float = 0,
         data_pool: Dict[str, Any] | None = None,
         global_variables: Dict[str, Any] | None = None,
+        teardown_options: List[Dict[str, Any]] | None = None,
     ) -> None:
         """
         批量压测
@@ -160,6 +161,9 @@ class BatchRunner:
         :param data_pool: 数据池配置，使用data_pool_option()函数创建
         :param global_variables: 全局变量字典，在所有接口中可通过 {{key}} 模板语法引用。
             优先级：全局变量 < 全局setup提取 < CSV数据池 < 接口级setup提取
+        :param teardown_options: 全局teardown选项，压测结束后执行（无论正常结束还是手动stop），
+            使用setup_option()函数创建，支持 {{key}} 模板语法引用全局变量和setup提取的值。
+            teardown执行失败不影响结果输出，仅打印错误日志。
         """
         ...
 
