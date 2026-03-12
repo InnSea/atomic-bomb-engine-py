@@ -183,9 +183,9 @@ pub(crate) async fn collect_results(
                 errors_per_second,
                 data_pool_stats: None, // 中间结果不包含数据池统计
                 avg_response_time: if total_requests > 0f64 {
-                    total_response_time_ms.load(Ordering::SeqCst) as f64 / total_requests
+                    (total_response_time_ms.load(Ordering::SeqCst) as f64 / total_requests).round() as u64
                 } else {
-                    0.0
+                    0
                 },
                 };
                 let elapsed = test_start.elapsed();

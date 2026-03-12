@@ -504,9 +504,9 @@ pub async fn batch(
         errors_per_second,
         data_pool_stats,
         avg_response_time: if total_requests > 0 {
-            total_response_time_ms.load(Ordering::SeqCst) as f64 / total_requests as f64
+            (total_response_time_ms.load(Ordering::SeqCst) as f64 / total_requests as f64).round() as u64
         } else {
-            0.0
+            0
         },
     });
     should_stop_tx.send(()).unwrap();

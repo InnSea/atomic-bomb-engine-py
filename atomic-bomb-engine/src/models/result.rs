@@ -66,7 +66,7 @@ pub struct BatchResult {
     // 数据池统计
     pub data_pool_stats: Option<DataPoolStats>,
     // 平均响应时间
-    pub avg_response_time: f64,
+    pub avg_response_time: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -89,7 +89,7 @@ pub struct ApiResult {
     pub total_data_kb: f64,
     pub throughput_per_second_kb: f64,
     pub concurrent_number: i32,
-    pub avg_response_time: f64,
+    pub avg_response_time: u64,
 }
 
 impl ApiResult {
@@ -113,7 +113,7 @@ impl ApiResult {
             total_data_kb: 0.0,
             throughput_per_second_kb: 0.0,
             concurrent_number: 0,
-            avg_response_time: 0.0,
+            avg_response_time: 0,
         }
     }
 }

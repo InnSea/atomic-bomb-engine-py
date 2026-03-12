@@ -540,9 +540,9 @@ pub(crate) async fn start_concurrency(
                             api_res.concurrent_number =
                                 api_concurrent_number_arc.load(Ordering::SeqCst) as i32;
                             api_res.avg_response_time = if api_total_requests > 0 {
-                                api_total_response_time_ms_arc.load(Ordering::SeqCst) as f64 / api_total_requests as f64
+                                (api_total_response_time_ms_arc.load(Ordering::SeqCst) as f64 / api_total_requests as f64).round() as u64
                             } else {
-                                0.0
+                                0
                             };
                             // 向最终结果中添加数据
                             let mut res = results_arc.lock().await;
@@ -714,9 +714,9 @@ pub(crate) async fn start_concurrency(
                             api_res.concurrent_number =
                                 api_concurrent_number_arc.load(Ordering::SeqCst) as i32;
                             api_res.avg_response_time = if api_total_requests > 0 {
-                                api_total_response_time_ms_arc.load(Ordering::SeqCst) as f64 / api_total_requests as f64
+                                (api_total_response_time_ms_arc.load(Ordering::SeqCst) as f64 / api_total_requests as f64).round() as u64
                             } else {
-                                0.0
+                                0
                             };
                             // 向最终结果中添加数据
                             let mut res = results_arc.lock().await;
