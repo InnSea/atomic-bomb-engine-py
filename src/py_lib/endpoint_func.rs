@@ -15,6 +15,7 @@ cookies=None,
 assert_options=None,
 think_time_option=None,
 setup_options=None,
+teardown_options=None,
 ))]
 pub(crate) fn endpoint(
     py: Python,
@@ -30,6 +31,7 @@ pub(crate) fn endpoint(
     assert_options: Option<Py<PyAny>>,
     think_time_option: Option<Py<PyAny>>,
     setup_options: Option<Py<PyAny>>,
+    teardown_options: Option<Py<PyAny>>,
 ) -> PyResult<Py<PyAny>> {
     let dict = PyDict::new(py);
     dict.set_item("name", name)?;
@@ -59,6 +61,9 @@ pub(crate) fn endpoint(
     };
     if let Some(setup_options) = setup_options {
         dict.set_item("setup_options", setup_options)?;
+    }
+    if let Some(teardown_options) = teardown_options {
+        dict.set_item("teardown_options", teardown_options)?;
     }
     Ok(dict.into_any().unbind())
 }

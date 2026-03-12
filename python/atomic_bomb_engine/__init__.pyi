@@ -35,6 +35,7 @@ def endpoint(
     assert_options: List | None = None,
     think_time_option: Dict[str, int] | None = None,
     setup_options: List | None = None,
+    teardown_options: List | None = None,
 ) -> Dict[str, Any]:
     """
     生成endpoint
@@ -55,6 +56,8 @@ def endpoint(
     :param assert_options: 断言参数
     :param think_time_option: 思考时间
     :param setup_options: 接口初始化选项
+    :param teardown_options: 接口后置选项，每次请求完成后执行，
+        使用setup_option()函数创建，支持 {{key}} 模板语法。
     """
 
 def setup_option(

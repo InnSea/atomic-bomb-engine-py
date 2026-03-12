@@ -93,6 +93,13 @@ pub fn new(
         let multipart_options =
             utils::parse_multipart_options::new(py, multipart_options_py)?;
 
+        let teardown_options_py = match dict.get_item("teardown_options")? {
+            Some(value) => Some(value.extract::<Py<PyList>>()?),
+            None => None,
+        };
+
+        let teardown_options = utils::parse_setup_options::new(py, teardown_options_py)?;
+
         endpoints.push(models::api_endpoint::ApiEndpoint {
             name,
             url,
@@ -106,6 +113,7 @@ pub fn new(
             assert_options,
             think_time_option,
             setup_options,
+            teardown_options,
         });
     }
     Ok(endpoints)
