@@ -110,6 +110,7 @@ mod tests {
             assert_options: Option::from(assert_vec),
             think_time_option: None,
             setup_options: None,
+            teardown_options: None,
             multipart_options: None,
         });
         let mut jsonpath_extracts: Vec<JsonpathExtract> = Vec::new();

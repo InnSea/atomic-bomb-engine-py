@@ -25,4 +25,5 @@ pub struct ApiEndpoint {
     pub assert_options: Option<Vec<AssertOption>>,
     pub think_time_option: Option<ThinkTime>,
     pub setup_options: Option<Vec<SetupApiEndpoint>>,
+    pub teardown_options: Option<Vec<SetupApiEndpoint>>,
 }

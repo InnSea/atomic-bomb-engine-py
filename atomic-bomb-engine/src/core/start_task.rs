@@ -95,6 +95,7 @@ pub(crate) async fn start_concurrency(
     let assert_options_base = endpoint_snapshot.assert_options.clone();
     let think_time_base = endpoint_snapshot.think_time_option.clone();
     let api_setup_base = endpoint_snapshot.setup_options.clone();
+    let api_teardown_base = endpoint_snapshot.teardown_options.clone();
     let endpoint_url = endpoint_snapshot.url.clone();
     // 统计并发数
     // 将接口并发数+1并返回当前并发数
@@ -768,6 +769,25 @@ pub(crate) async fn start_concurrency(
                         err_source,
                     )
                     .await;
+            }
+        }
+        // 接口级teardown
+        if let Some(ref teardown_opts) = api_teardown_base {
+            match setup::start_setup(
+                teardown_opts.clone(),
+                api_extract_b_tree_map.clone(),
+                client.clone(),
+            )
+            .await
+            {
+                Ok(_) => {}
+                Err(e) => {
+                    eprintln!(
+                        "接口-{:?} teardown执行失败: {:?}",
+                        api_name_clone.clone(),
+                        e.to_string()
+                    );
+                }
             }
         }
     }
