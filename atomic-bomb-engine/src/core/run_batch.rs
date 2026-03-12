@@ -26,6 +26,7 @@ pub async fn run_batch(
     should_stop: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     data_pool: Option<Arc<DataPool>>,
     global_variables: Option<BTreeMap<String, Value>>,
+    teardown_options: Option<Vec<SetupApiEndpoint>>,
 ) -> BoxStream<'static, Result<Option<BatchResult>, anyhow::Error>> {
     let (sender, receiver) = mpsc::channel(1024);
 
@@ -46,6 +47,7 @@ pub async fn run_batch(
             should_stop,
             data_pool,
             global_variables,
+            teardown_options,
         )
         .await;
 
@@ -147,6 +149,7 @@ mod tests {
             None,
             4096,
             0f64,
+            None,
             None,
             None,
             None,

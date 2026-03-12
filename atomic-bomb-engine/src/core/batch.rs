@@ -45,6 +45,7 @@ pub async fn batch(
     should_stop: Option<Arc<std::sync::atomic::AtomicBool>>,
     data_pool: Option<Arc<DataPool>>,
     global_variables: Option<BTreeMap<String, Value>>,
+    teardown_options: Option<Vec<SetupApiEndpoint>>,
 ) -> anyhow::Result<BatchResult> {
     // 阻止电脑休眠
     let _guard = SleepGuard::new(should_prevent);
@@ -80,6 +81,8 @@ pub async fn batch(
     let max_response_time = Arc::new(AtomicU64::new(0));
     // 统计最小响应时间
     let min_response_time = Arc::new(AtomicU64::new(u64::MAX));
+    // 统计总响应时间（用于计算平均响应时间）
+    let total_response_time_ms = Arc::new(AtomicU64::new(0));
     // 统计错误数量
     let err_count = Arc::new(AtomicUsize::new(0));
     // 统计每秒错误数
@@ -267,6 +270,8 @@ pub async fn batch(
         let api_concurrent_number = Arc::new(AtomicUsize::new(0));
         // 接口响应大小
         let api_total_response_size = Arc::new(AtomicUsize::new(0));
+        // 接口总响应时间
+        let api_total_response_time_ms = Arc::new(AtomicU64::new(0));
         // 初始化api结果
         let mut init_api_res = ApiResult::new();
         init_api_res.name = name.clone();
@@ -320,6 +325,8 @@ pub async fn batch(
                     Arc::clone(&api_min_response_time),   // api最小响应时间
                     Arc::clone(&total_response_size),     // 总响应数据
                     Arc::clone(&api_total_response_size), // api响应数据
+                    Arc::clone(&total_response_time_ms),  // 总响应时间
+                    Arc::clone(&api_total_response_time_ms), // api总响应时间
                     Arc::clone(&api_err_count),           // api错误数
                     Arc::clone(&successful_requests),     // 成功数量
                     Arc::clone(&err_count),               // 错误数量
@@ -350,6 +357,7 @@ pub async fn batch(
         Arc::clone(&successful_requests),
         Arc::clone(&histogram),
         Arc::clone(&total_response_size),
+        Arc::clone(&total_response_time_ms),
         Arc::clone(&http_errors),
         Arc::clone(&err_count),
         Arc::clone(&max_response_time),
@@ -388,6 +396,21 @@ pub async fn batch(
                 eprintln!("协程被取消或意外停止::{:?}", err);
             }
         };
+    }
+
+    // 执行全局teardown
+    if let Some(teardown_opts) = teardown_options {
+        let teardown_extract_map = extract_map_arc.lock().await.clone();
+        match setup::start_setup(teardown_opts, teardown_extract_map, client.clone()).await {
+            Ok(_) => {
+                if verbose {
+                    println!("全局teardown执行完成");
+                }
+            }
+            Err(e) => {
+                eprintln!("全局teardown执行失败: {:?}", e);
+            }
+        }
     }
 
     // 对结果进行赋值
@@ -480,6 +503,11 @@ pub async fn batch(
         api_results: api_results.to_vec().clone(),
         errors_per_second,
         data_pool_stats,
+        avg_response_time: if total_requests > 0 {
+            total_response_time_ms.load(Ordering::SeqCst) as f64 / total_requests as f64
+        } else {
+            0.0
+        },
     });
     should_stop_tx.send(()).unwrap();
     eprintln!("测试完成！");

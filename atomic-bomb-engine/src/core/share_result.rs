@@ -22,6 +22,7 @@ pub(crate) async fn collect_results(
     successful_requests: Arc<AtomicUsize>,
     histogram: Arc<Mutex<Histogram>>,
     total_response_size: Arc<AtomicUsize>,
+    total_response_time_ms: Arc<AtomicU64>,
     http_errors: Arc<Mutex<HttpErrorStats>>,
     err_count: Arc<AtomicUsize>,
     max_resp_time: Arc<AtomicU64>,
@@ -181,6 +182,11 @@ pub(crate) async fn collect_results(
                 api_results: api_results.to_vec().clone(),
                 errors_per_second,
                 data_pool_stats: None, // 中间结果不包含数据池统计
+                avg_response_time: if total_requests > 0f64 {
+                    total_response_time_ms.load(Ordering::SeqCst) as f64 / total_requests
+                } else {
+                    0.0
+                },
                 };
                 let elapsed = test_start.elapsed();
                 if verbose {

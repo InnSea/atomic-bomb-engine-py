@@ -42,6 +42,8 @@ pub(crate) async fn start_concurrency(
     api_min_response_time_arc: Arc<AtomicU64>,
     total_response_size_arc: Arc<AtomicUsize>,
     api_total_response_size_arc: Arc<AtomicUsize>,
+    total_response_time_ms_arc: Arc<AtomicU64>,
+    api_total_response_time_ms_arc: Arc<AtomicU64>,
     api_err_count_arc: Arc<AtomicUsize>,
     successful_requests_arc: Arc<AtomicUsize>,
     err_count_arc: Arc<AtomicUsize>,
@@ -374,6 +376,9 @@ pub(crate) async fn start_concurrency(
                         // 请求成功的情况
                         // 响应时间
                         let duration = start.elapsed().as_millis() as u64;
+                        // 累加总响应时间
+                        total_response_time_ms_arc.fetch_add(duration, Ordering::Relaxed);
+                        api_total_response_time_ms_arc.fetch_add(duration, Ordering::Relaxed);
                         // api统计桶
                         let mut api_histogram = api_histogram_arc.lock().await;
                         // 最大请求时间（无锁原子操作）
@@ -534,6 +539,11 @@ pub(crate) async fn start_concurrency(
                                 api_res.err_count as f64 / api_res.total_requests as f64 * 100.0;
                             api_res.concurrent_number =
                                 api_concurrent_number_arc.load(Ordering::SeqCst) as i32;
+                            api_res.avg_response_time = if api_total_requests > 0 {
+                                api_total_response_time_ms_arc.load(Ordering::SeqCst) as f64 / api_total_requests as f64
+                            } else {
+                                0.0
+                            };
                             // 向最终结果中添加数据
                             let mut res = results_arc.lock().await;
                             match index < res.len() {
@@ -551,6 +561,9 @@ pub(crate) async fn start_concurrency(
                     _ => {
                         // 响应时间
                         let duration = start.elapsed().as_millis() as u64;
+                        // 累加总响应时间
+                        total_response_time_ms_arc.fetch_add(duration, Ordering::Relaxed);
+                        api_total_response_time_ms_arc.fetch_add(duration, Ordering::Relaxed);
                         err_count_arc.fetch_add(1, Ordering::Relaxed);
                         api_err_count_arc.fetch_add(1, Ordering::Relaxed);
                         let status_code = u16::from(response.status());
@@ -700,6 +713,11 @@ pub(crate) async fn start_concurrency(
                                 api_res.err_count as f64 / api_res.total_requests as f64 * 100.0;
                             api_res.concurrent_number =
                                 api_concurrent_number_arc.load(Ordering::SeqCst) as i32;
+                            api_res.avg_response_time = if api_total_requests > 0 {
+                                api_total_response_time_ms_arc.load(Ordering::SeqCst) as f64 / api_total_requests as f64
+                            } else {
+                                0.0
+                            };
                             // 向最终结果中添加数据
                             let mut res = results_arc.lock().await;
                             match index < res.len() {
