@@ -254,6 +254,9 @@ impl BatchRunner {
                             )?;
                             dict.set_item("errors_per_second", test_result.errors_per_second)?;
                             dict.set_item("avg_response_time", test_result.avg_response_time)?;
+                            // 引擎错误
+                            let error_list = PyList::new(py, &test_result.engine_errors)?;
+                            dict.set_item("engine_errors", error_list)?;
                             // 数据池统计
                             if let Some(ref dp_stats) = test_result.data_pool_stats {
                                 let dp_dict = PyDict::new(py);

@@ -61,7 +61,35 @@ pub async fn run_batch(
                 }
             }
             Err(e) => {
-                eprintln!("Error: {:?}", e.to_string());
+                let err_msg = format!("{:?}", e.to_string());
+                eprintln!("Error: {}", err_msg);
+                // 构造一个只包含错误信息的BatchResult发送出去
+                let error_result = BatchResult {
+                    total_duration: 0.0,
+                    success_rate: 0.0,
+                    error_rate: 0.0,
+                    median_response_time: 0,
+                    response_time_95: 0,
+                    response_time_99: 0,
+                    total_requests: 0,
+                    rps: 0.0,
+                    max_response_time: 0,
+                    min_response_time: 0,
+                    err_count: 0,
+                    total_data_kb: 0.0,
+                    throughput_per_second_kb: 0.0,
+                    http_errors: std::collections::HashMap::new(),
+                    timestamp: 0,
+                    assert_errors: std::collections::HashMap::new(),
+                    total_concurrent_number: 0,
+                    api_results: Vec::new(),
+                    errors_per_second: 0,
+                    data_pool_stats: None,
+                    avg_response_time: 0,
+                    engine_errors: vec![e.to_string()],
+                };
+                let _ = sender.send(Some(error_result)).await;
+                let _ = sender.send(None).await;
             }
         }
     });

@@ -60,6 +60,7 @@ pub(crate) async fn start_concurrency(
     index: usize,
     should_stop: Arc<std::sync::atomic::AtomicBool>,
     data_pool: Option<Arc<DataPool>>,
+    engine_errors: Arc<Mutex<Vec<String>>>,
 ) -> Result<(), Error> {
     fn atomic_max(atomic: &AtomicU64, val: u64) {
         let mut current = atomic.load(Ordering::Relaxed);
@@ -136,11 +137,13 @@ pub(crate) async fn start_concurrency(
                     };
                 }
                 Err(e) => {
-                    eprintln!(
+                    let err_msg = format!(
                         "接口-{:?}初始化失败,1秒后重试!!: {:?}",
                         api_name_clone.clone(),
                         e.to_string()
                     );
+                    eprintln!("{}", err_msg);
+                    engine_errors.lock().await.push(err_msg);
                     tokio::time::sleep(Duration::from_secs(1)).await;
                     continue 'RETRY;
                 }
@@ -338,7 +341,9 @@ pub(crate) async fn start_concurrency(
                     tokio::time::sleep(Duration::from_millis(tt)).await;
                 }
                 false => {
-                    eprintln!("最小思考时间大于最大思考时间，该配置不生效!")
+                    let err_msg = "最小思考时间大于最大思考时间，该配置不生效!".to_string();
+                    eprintln!("{}", err_msg);
+                    engine_errors.lock().await.push(err_msg);
                 }
             }
         }
@@ -782,11 +787,13 @@ pub(crate) async fn start_concurrency(
             {
                 Ok(_) => {}
                 Err(e) => {
-                    eprintln!(
+                    let err_msg = format!(
                         "接口-{:?} teardown执行失败: {:?}",
                         api_name_clone.clone(),
                         e.to_string()
                     );
+                    eprintln!("{}", err_msg);
+                    engine_errors.lock().await.push(err_msg);
                 }
             }
         }

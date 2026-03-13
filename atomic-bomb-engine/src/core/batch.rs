@@ -120,6 +120,8 @@ pub async fn batch(
     let http_errors = Arc::new(Mutex::new(HttpErrorStats::new()));
     // 统计断言错误
     let assert_errors = Arc::new(Mutex::new(AssertErrorStats::new()));
+    // 引擎错误收集
+    let engine_errors: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     // 总权重
     let total_weight: u32 = api_endpoints.iter().map(|e| e.weight).sum();
     // 是否停止通道
@@ -235,6 +237,7 @@ pub async fn batch(
                     Ok(c) => c,
                     Err(e) => {
                         eprintln!("{:?}", e);
+                        engine_errors.lock().await.push(format!("URL模板渲染失败: {:?}", e));
                         endpoint.url.clone()
                     }
                 }
@@ -343,6 +346,7 @@ pub async fn batch(
                     index,                                // 索引
                     Arc::clone(&should_stop_flag),        // 停止信号
                     data_pool_arc.clone(),                // 数据池
+                    Arc::clone(&engine_errors),           // 引擎错误收集
                 ));
             handles.push(handle);
         }
@@ -374,6 +378,7 @@ pub async fn batch(
         verbose,
         test_start,
         ema_alpha,
+        Arc::clone(&engine_errors),
     ));
 
     // 等待任务完成
@@ -388,12 +393,16 @@ pub async fn batch(
                         }
                     }
                     Err(e) => {
-                        eprintln!("异步任务内部错误::{:?}", e)
+                        let err_msg = format!("异步任务内部错误::{:?}", e);
+                        eprintln!("{}", err_msg);
+                        engine_errors.lock().await.push(err_msg);
                     }
                 };
             }
             Err(err) => {
-                eprintln!("协程被取消或意外停止::{:?}", err);
+                let err_msg = format!("协程被取消或意外停止::{:?}", err);
+                eprintln!("{}", err_msg);
+                engine_errors.lock().await.push(err_msg);
             }
         };
     }
@@ -408,7 +417,9 @@ pub async fn batch(
                 }
             }
             Err(e) => {
-                eprintln!("全局teardown执行失败: {:?}", e);
+                let err_msg = format!("全局teardown执行失败: {:?}", e);
+                eprintln!("{}", err_msg);
+                engine_errors.lock().await.push(err_msg);
             }
         }
     }
@@ -508,6 +519,7 @@ pub async fn batch(
         } else {
             0
         },
+        engine_errors: engine_errors.lock().await.clone(),
     });
     should_stop_tx.send(()).unwrap();
     eprintln!("测试完成！");

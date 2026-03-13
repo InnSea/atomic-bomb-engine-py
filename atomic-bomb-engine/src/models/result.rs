@@ -67,6 +67,8 @@ pub struct BatchResult {
     pub data_pool_stats: Option<DataPoolStats>,
     // 平均响应时间
     pub avg_response_time: u64,
+    // 引擎错误信息
+    pub engine_errors: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

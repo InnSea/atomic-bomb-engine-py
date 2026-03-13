@@ -39,6 +39,7 @@ pub(crate) async fn collect_results(
     verbose: bool,
     test_start: Instant,
     ema_alpha: f64,
+    engine_errors: Arc<Mutex<Vec<String>>>,
 ) {
     let mut api_res_number_map: HashMap<String, usize> = HashMap::new();
     let mut interval = interval(Duration::from_secs(1));
@@ -186,6 +187,12 @@ pub(crate) async fn collect_results(
                     (total_response_time_ms.load(Ordering::SeqCst) as f64 / total_requests).round() as u64
                 } else {
                     0
+                },
+                engine_errors: {
+                    let mut errs = engine_errors.lock().await;
+                    let snapshot = errs.clone();
+                    errs.clear();
+                    snapshot
                 },
                 };
                 let elapsed = test_start.elapsed();
