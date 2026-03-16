@@ -191,6 +191,7 @@ pub async fn batch(
     // 创建http客户端
     let builder = Client::builder()
         .cookie_store(cookie_store_enable)
+        .pool_max_idle_per_host(concurrent_requests)
         .default_headers({
             let mut headers = HeaderMap::new();
             headers.insert(USER_AGENT, user_agent_value);
@@ -219,8 +220,10 @@ pub async fn batch(
         };
     };
     // println!("extract_map:{:?}", extract_map);
-    // 并发安全的提取字典
-    let extract_map_arc = Arc::new(Mutex::new(extract_map));
+    // 全局提取字典（setup后只读，不需要Mutex）
+    let extract_map_arc = Arc::new(extract_map);
+    // 复用Handlebars实例
+    let handlebars = Handlebars::new();
     // 针对每一个接口开始配置
     for (index, endpoint_arc) in api_endpoints_arc.clone().into_iter().enumerate() {
         let endpoint = endpoint_arc.lock().await;
@@ -229,10 +232,9 @@ pub async fn batch(
         let api_url = match is_need_render_template {
             true => {
                 // 使用模版替换cookies
-                let handlebars = Handlebars::new();
                 match handlebars.render_template(
                     &*endpoint.url.clone(),
-                    &json!(*extract_map_arc.lock().await),
+                    &json!(*extract_map_arc),
                 ) {
                     Ok(c) => c,
                     Err(e) => {
@@ -409,7 +411,7 @@ pub async fn batch(
 
     // 执行全局teardown
     if let Some(teardown_opts) = teardown_options {
-        let teardown_extract_map = extract_map_arc.lock().await.clone();
+        let teardown_extract_map = (*extract_map_arc).clone();
         match setup::start_setup(teardown_opts, teardown_extract_map, client.clone()).await {
             Ok(_) => {
                 if verbose {
