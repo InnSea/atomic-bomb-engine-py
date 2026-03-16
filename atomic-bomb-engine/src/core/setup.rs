@@ -50,8 +50,7 @@ pub async fn start_setup(
             let handlebars = Handlebars::new();
             let val_str = match value.to_str() {
                 Ok(v) => v,
-                Err(e) => {
-                    eprintln!("设置header失败::{:?}", e.to_string());
+                Err(_) => {
                     return;
                 }
             };
@@ -60,8 +59,7 @@ pub async fn start_setup(
                     let header_value = v.parse::<HeaderValue>().expect("无效的header值");
                     header_value
                 }
-                Err(e) => {
-                    eprintln!("{:?}", e);
+                Err(_) => {
                     value.clone()
                 }
             };
@@ -79,8 +77,7 @@ pub async fn start_setup(
             let json_string =
                 match handlebars.render_template(&json_source, &json!(extract_map)) {
                     Ok(j) => j,
-                    Err(e) => {
-                        eprintln!("{:?}", e);
+                    Err(_) => {
                         json_source.clone()
                     }
                 };
@@ -102,8 +99,7 @@ pub async fn start_setup(
                 let handlebars = Handlebars::new();
                 let new_val = match handlebars.render_template(value, &json!(extract_map)) {
                     Ok(v) => v,
-                    Err(e) => {
-                        eprintln!("{:?}", e);
+                    Err(_) => {
                         value.to_string()
                     }
                 };

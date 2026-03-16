@@ -53,16 +53,10 @@ pub async fn run_batch(
 
         match res {
             Ok(r) => {
-                if let Err(_) = sender.send(Some(r)).await {
-                    eprintln!("压测结束，但是发送结果失败");
-                }
-                if let Err(_) = sender.send(None).await {
-                    eprintln!("发送结束信号失败");
-                }
+                if let Err(_) = sender.send(Some(r)).await {}
+                if let Err(_) = sender.send(None).await {}
             }
             Err(e) => {
-                let err_msg = format!("{:?}", e.to_string());
-                eprintln!("Error: {}", err_msg);
                 // 构造一个只包含错误信息的BatchResult发送出去
                 let error_result = BatchResult {
                     total_duration: 0.0,

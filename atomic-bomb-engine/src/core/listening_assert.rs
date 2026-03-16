@@ -4,6 +4,15 @@ use serde_json::Value;
 use std::sync::atomic::Ordering;
 use tokio::sync::mpsc;
 
+fn normalize_serde_error(e: &serde_json::Error) -> String {
+    let msg = format!("{}", e);
+    if let Some(pos) = msg.find(" at line ") {
+        format!("JSONPath查询失败:{}", &msg[..pos])
+    } else {
+        format!("JSONPath查询失败:{}", msg)
+    }
+}
+
 // todo: 断言可以使用模板
 pub async fn listening_assert(mut rx: mpsc::Receiver<AssertTask>) {
     loop {
@@ -20,7 +29,7 @@ pub async fn listening_assert(mut rx: mpsc::Receiver<AssertTask>) {
                         assertion_failed = true;
                         task.assert_errors.lock().await.increment(
                             task.api_name.clone(),
-                            format!("JSONPath查询失败:{:?}", e),
+                            normalize_serde_error(&e),
                             task.endpoint.lock().await.url.clone()
                         ).await;
                         None
@@ -32,7 +41,6 @@ pub async fn listening_assert(mut rx: mpsc::Receiver<AssertTask>) {
                 // 多断言
                 for assert_option in &task.assert_options {
                     if task.body_bytes.len() == 0{
-                        eprintln!("无法获取到结构体，不进行断言");
                         break
                     }
                     // 通过jsonpath提取数据
@@ -94,8 +102,7 @@ pub async fn listening_assert(mut rx: mpsc::Receiver<AssertTask>) {
                                     }
                                 }
                             },
-                            Err(e) => {
-                                eprintln!("JSONPath 查询失败: {}", e);
+                            Err(_) => {
                                 assertion_failed = true;
                                 break;
                             },
@@ -109,12 +116,9 @@ pub async fn listening_assert(mut rx: mpsc::Receiver<AssertTask>) {
                     task.api_successful_requests.fetch_add(1, Ordering::Relaxed);
                 };
                 // 回调完成信号
-                if let Err(_) = task.completion_signal.send(()){
-                    eprintln!("回调任务状态失败");
-                };
+                let _ = task.completion_signal.send(());
             }
             else => {
-                eprintln!("断言任务执行完成！");
                 break;
             }
         }

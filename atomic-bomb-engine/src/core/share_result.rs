@@ -201,8 +201,6 @@ pub(crate) async fn collect_results(
                 };
                 let _ = result_channel.send(Some(result)).await;
             }
-        } => {
-            eprintln!("推送意外停止")
-        }
+        } => {}
     }
 }

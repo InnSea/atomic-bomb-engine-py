@@ -237,7 +237,6 @@ pub async fn batch(
                 ) {
                     Ok(c) => c,
                     Err(e) => {
-                        eprintln!("{:?}", e);
                         engine_errors.lock().await.push(format!("URL模板渲染失败: {:?}", e));
                         endpoint.url.clone()
                     }
@@ -395,14 +394,12 @@ pub async fn batch(
                     }
                     Err(e) => {
                         let err_msg = format!("异步任务内部错误::{:?}", e);
-                        eprintln!("{}", err_msg);
                         engine_errors.lock().await.push(err_msg);
                     }
                 };
             }
             Err(err) => {
                 let err_msg = format!("协程被取消或意外停止::{:?}", err);
-                eprintln!("{}", err_msg);
                 engine_errors.lock().await.push(err_msg);
             }
         };
@@ -419,7 +416,6 @@ pub async fn batch(
             }
             Err(e) => {
                 let err_msg = format!("全局teardown执行失败: {:?}", e);
-                eprintln!("{}", err_msg);
                 engine_errors.lock().await.push(err_msg);
             }
         }
@@ -523,6 +519,5 @@ pub async fn batch(
         engine_errors: engine_errors.lock().await.clone(),
     });
     should_stop_tx.send(()).unwrap();
-    eprintln!("测试完成！");
     result
 }

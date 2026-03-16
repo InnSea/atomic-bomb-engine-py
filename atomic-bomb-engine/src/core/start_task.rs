@@ -144,7 +144,6 @@ pub(crate) async fn start_concurrency(
                         api_name_clone.clone(),
                         e.to_string()
                     );
-                    eprintln!("{}", err_msg);
                     engine_errors.lock().await.push(err_msg);
                     tokio::time::sleep(Duration::from_secs(1)).await;
                     continue 'RETRY;
@@ -185,8 +184,7 @@ pub(crate) async fn start_concurrency(
                         let new_val =
                             match handlebars.render_template(v, &json!(api_extract_b_tree_map)) {
                                 Ok(v) => v,
-                                Err(e) => {
-                                    eprintln!("{:?}", e);
+                                Err(_) => {
                                     v.to_string()
                                 }
                             };
@@ -207,8 +205,7 @@ pub(crate) async fn start_concurrency(
                     // 使用模版替换cookies
                     match handlebars.render_template(source, &json!(api_extract_b_tree_map)) {
                         Ok(c) => c,
-                        Err(e) => {
-                            eprintln!("{:?}", e);
+                        Err(_) => {
                             source.to_string()
                         }
                     }
@@ -239,8 +236,7 @@ pub(crate) async fn start_concurrency(
                         .render_template(&json_source, &json!(api_extract_b_tree_map))
                     {
                         Ok(j) => j,
-                        Err(e) => {
-                            eprintln!("{:?}", e);
+                        Err(_) => {
                             json_source.clone()
                         }
                     };
@@ -288,8 +284,7 @@ pub(crate) async fn start_concurrency(
                     let new_val =
                         match handlebars.render_template(value, &json!(api_extract_b_tree_map)) {
                             Ok(v) => v,
-                            Err(e) => {
-                                eprintln!("{:?}", e);
+                            Err(_) => {
                                 value.to_string()
                             }
                         };
@@ -340,7 +335,6 @@ pub(crate) async fn start_concurrency(
                 }
                 false => {
                     let err_msg = "最小思考时间大于最大思考时间，该配置不生效!".to_string();
-                    eprintln!("{}", err_msg);
                     engine_errors.lock().await.push(err_msg);
                 }
             }
@@ -394,13 +388,9 @@ pub(crate) async fn start_concurrency(
                         // api最小响应时间
                         atomic_min(&api_min_response_time_arc, duration);
                         // 将数据放入全局统计桶
-                        if let Err(e) = histogram_arc.lock().await.increment(duration) {
-                            eprintln!("histogram设置数据错误:{:?}", e)
-                        };
+                        let _ = histogram_arc.lock().await.increment(duration);
                         // 将数据放入api统计桶
-                        if let Err(e) = api_histogram.increment(duration) {
-                            eprintln!("api histogram设置错误:{:?}", e)
-                        }
+                        let _ = api_histogram.increment(duration);
                         // 获取响应头
                         let resp_headers = response.headers();
                         // 计算响应头大小
@@ -554,9 +544,7 @@ pub(crate) async fn start_concurrency(
                                 true => {
                                     res[index] = api_res.clone();
                                 }
-                                false => {
-                                    eprintln!("results索引越界");
-                                }
+                                false => {}
                             };
                         }
                         // println!("res:{:?}", res);
@@ -581,13 +569,9 @@ pub(crate) async fn start_concurrency(
                         // api最小响应时间
                         atomic_min(&api_min_response_time_arc, duration);
                         // 将数据放入全局统计桶
-                        if let Err(e) = histogram_arc.lock().await.increment(duration) {
-                            eprintln!("histogram设置数据错误:{:?}", e)
-                        };
+                        let _ = histogram_arc.lock().await.increment(duration);
                         // 将数据放入api统计桶
-                        if let Err(e) = api_histogram.increment(duration) {
-                            eprintln!("api histogram设置错误:{:?}", e)
-                        }
+                        let _ = api_histogram.increment(duration);
                         // 获取响应头
                         let resp_headers = response.headers();
                         // 计算响应头大小
@@ -642,7 +626,6 @@ pub(crate) async fn start_concurrency(
                         // 将bytes转换为string
                         let buffer =
                             String::from_utf8(body_bytes_clone).expect("无法转换响应体为字符串");
-                        eprintln!("{:+?}", buffer);
                         // 获取需要等待的对象
                         let api_total_data_bytes =
                             api_total_response_size_arc.load(Ordering::SeqCst);
@@ -728,9 +711,7 @@ pub(crate) async fn start_concurrency(
                                 true => {
                                     res[index] = api_res.clone();
                                 }
-                                false => {
-                                    eprintln!("results索引越界");
-                                }
+                                false => {}
                             };
                         }
                     }
@@ -790,7 +771,6 @@ pub(crate) async fn start_concurrency(
                         api_name_clone.clone(),
                         e.to_string()
                     );
-                    eprintln!("{}", err_msg);
                     engine_errors.lock().await.push(err_msg);
                 }
             }
