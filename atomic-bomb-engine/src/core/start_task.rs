@@ -30,7 +30,7 @@ pub(crate) async fn start_concurrency(
     controller_arc: Arc<ConcurrencyController>,
     api_concurrent_number_arc: Arc<AtomicUsize>,
     concurrent_number_arc: Arc<AtomicUsize>,
-    extract_map_arc: Arc<BTreeMap<String, Value>>,
+    extract_map_arc: Arc<Mutex<BTreeMap<String, Value>>>,
     endpoint_arc: Arc<Mutex<ApiEndpoint>>,
     total_requests_arc: Arc<AtomicUsize>,
     api_total_requests_arc: Arc<AtomicUsize>,
@@ -106,14 +106,12 @@ pub(crate) async fn start_concurrency(
     concurrent_number_arc.fetch_add(1, Ordering::Relaxed);
     // 将接口并发数添加到推送结果中
     results_arc.lock().await[index].concurrent_number = api_current_concurrency;
-    // 复用Handlebars实例，避免每次请求都创建
-    let handlebars = Handlebars::new();
     // 在到达结束时间后停止发送请求
     'RETRY: while Instant::now() < test_end && !should_stop.load(Ordering::SeqCst) {
         // 设置api的提取器
         let mut api_extract_b_tree_map = BTreeMap::new();
         // 将全局字典加入到api字典
-        api_extract_b_tree_map.extend((*extract_map_arc).clone());
+        api_extract_b_tree_map.extend(extract_map_arc.lock().await.clone());
         // 从数据池获取数据并加入到api字典
         if let Some(ref pool) = data_pool {
             let row_data = pool.get_next_row();
@@ -182,6 +180,7 @@ pub(crate) async fn start_concurrency(
                 match is_need_render_template {
                     true => {
                         // 将header的value模板进行填充
+                        let handlebars = Handlebars::new();
                         let new_val =
                             match handlebars.render_template(v, &json!(api_extract_b_tree_map)) {
                                 Ok(v) => v,
@@ -205,6 +204,7 @@ pub(crate) async fn start_concurrency(
             let cookie_val = match is_need_render_template {
                 true => {
                     // 使用模版替换cookies
+                    let handlebars = Handlebars::new();
                     match handlebars.render_template(source, &json!(api_extract_b_tree_map)) {
                         Ok(c) => c,
                         Err(e) => {
@@ -235,6 +235,7 @@ pub(crate) async fn start_concurrency(
             let json_val = match is_need_render_template {
                 true => {
                     // 模板替换
+                    let handlebars = Handlebars::new();
                     let json_string = match handlebars
                         .render_template(&json_source, &json!(api_extract_b_tree_map))
                     {
@@ -285,6 +286,7 @@ pub(crate) async fn start_concurrency(
             if is_need_render {
                 // 将模版填充
                 form_data.iter_mut().for_each(|(_key, value)| {
+                    let handlebars = Handlebars::new();
                     let new_val =
                         match handlebars.render_template(value, &json!(api_extract_b_tree_map)) {
                             Ok(v) => v,
