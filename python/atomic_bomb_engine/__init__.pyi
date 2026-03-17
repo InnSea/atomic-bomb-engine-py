@@ -131,7 +131,7 @@ def data_pool_option(file_path: str, mode: str = "sequential") -> Dict[str, Any]
 
 class BatchRunner:
     def __init__(self) -> None: ...
-    def run(
+    async def run(
         self,
         test_duration_secs: int,
         concurrent_requests: int,
@@ -170,6 +170,20 @@ class BatchRunner:
         """
         ...
 
-    def stop(self) -> None: ...
+    async def stop(self) -> None:
+        """
+        停止压测（异步方法）
+        设置停止标志，中止后台任务，清理资源。
+        """
+        ...
+
+    def __aiter__(self) -> "BatchRunner": ...
+    async def __anext__(self) -> Any:
+        """
+        异步迭代获取下一个压测结果。
+        用法: async for msg in runner: ...
+        """
+        ...
+
     def __iter__(self) -> "BatchRunner": ...
     def __next__(self) -> Optional[Any]: ...
