@@ -404,19 +404,25 @@ pub(crate) async fn start_concurrency(
                         }
                         // 响应流
                         let mut stream = response.bytes_stream();
-                        // 响应体
+                        // 根据是否有自定义断言决定是否缓存响应体
+                        let need_body = assert_options_clone.is_some() || verbose;
                         let mut body_bytes = Vec::new();
+                        let mut stream_error = false;
                         while let Some(item) = stream.next().await {
                             match item {
                                 Ok(chunk) => {
-                                    // 获取当前的chunk
+                                    // 统计响应大小
                                     total_response_size_arc
                                         .fetch_add(chunk.len(), Ordering::Relaxed);
                                     api_total_response_size_arc
                                         .fetch_add(chunk.len(), Ordering::Relaxed);
-                                    body_bytes.extend_from_slice(&chunk);
+                                    // 仅在需要断言或verbose时缓存响应体
+                                    if need_body {
+                                        body_bytes.extend_from_slice(&chunk);
+                                    }
                                 }
                                 Err(e) => {
+                                    stream_error = true;
                                     api_err_count_arc.fetch_add(1, Ordering::Relaxed);
                                     err_count_arc.fetch_add(1, Ordering::Relaxed);
                                     http_errors_arc
@@ -440,17 +446,19 @@ pub(crate) async fn start_concurrency(
                                 }
                             };
                         }
-                        if verbose {
-                            let body_bytes_clone = body_bytes.clone();
-                            let buffer = String::from_utf8(body_bytes_clone)
+                        if verbose && !body_bytes.is_empty() {
+                            let buffer = String::from_utf8(body_bytes.clone())
                                 .expect("无法转换响应体为字符串");
                             println!("{:+?}", buffer);
                         }
                         // 断言
+                        if stream_error {
+                            // 流读取出错，不做断言也不计入成功
+                        } else {
                         match assert_options_clone {
                             Some(assert_options) => {
                                 // 没有获取到响应体，就不进行断言
-                                if body_bytes.clone().len() > 0 {
+                                if body_bytes.len() > 0 {
                                     // 一次性通道，用于确定断言任务被消费完成后再进行数据同步
                                     let (oneshot_tx, oneshot_rx) = oneshot::channel();
                                     // 实例化任务
@@ -475,11 +483,12 @@ pub(crate) async fn start_concurrency(
                                 };
                             }
                             None => {
-                                // 没有断言的时候将成功数据+1
+                                // 状态码已校验为2xx/3xx，没有自定义断言时直接计入成功
                                 successful_requests_arc.fetch_add(1, Ordering::Relaxed);
                                 api_successful_requests_arc.fetch_add(1, Ordering::Relaxed);
                             }
                         };
+                        } // end of stream_error check
                         // 给结果赋值
                         {
                             let api_total_data_bytes =
