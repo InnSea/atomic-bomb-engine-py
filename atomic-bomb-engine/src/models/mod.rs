@@ -1,4 +1,5 @@
 pub mod api_endpoint;
+pub mod api_endpoint_stats;
 pub mod assert_error_stats;
 pub mod assert_option;
 pub(crate) mod assert_task;

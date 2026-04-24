@@ -8,13 +8,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::Error;
 use futures::future::join_all;
 use handlebars::Handlebars;
-use histogram::Histogram;
+use histogram::AtomicHistogram;
 use reqwest::header::{HeaderMap, HeaderValue, USER_AGENT};
 use reqwest::Client;
 use serde_json::{json, Value};
 use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio::task::JoinHandle;
-use url::Url;
 
 use crate::core::check_endpoints_names::check_endpoints_names;
 use crate::core::concurrency_controller::ConcurrencyController;
@@ -22,12 +21,16 @@ use crate::core::fixed_size_queue;
 use crate::core::sleep_guard::SleepGuard;
 use crate::core::{listening_assert, setup, share_result, start_task};
 use crate::models::api_endpoint::ApiEndpoint;
+use crate::models::api_endpoint_stats::ApiEndpointStats;
 use crate::models::assert_error_stats::AssertErrorStats;
 use crate::models::data_pool::DataPool;
 use crate::models::http_error_stats::HttpErrorStats;
-use crate::models::result::{ApiResult, BatchResult};
+use crate::models::result::BatchResult;
 use crate::models::setup::SetupApiEndpoint;
 use crate::models::step_option::{InnerStepOption, StepOption};
+
+/// 断言消费 worker 数量. 足够吃满 JSONPath 解析的 CPU, 同时避免过度调度
+const ASSERT_WORKER_COUNT: usize = 4;
 
 pub async fn batch(
     result_sender: mpsc::Sender<Option<BatchResult>>,
@@ -66,9 +69,9 @@ pub async fn batch(
     if let Err(e) = check_endpoints_names(api_endpoints.clone()) {
         return Err(Error::msg(e));
     }
-    // 总响应时间统计
-    let histogram = match Histogram::new(14, 20) {
-        Ok(h) => Arc::new(Mutex::new(h)),
+    // 总响应时间统计 (AtomicHistogram 内部用原子 bucket, 热路径无锁 increment)
+    let histogram = match AtomicHistogram::new(14, 20) {
+        Ok(h) => Arc::new(h),
         Err(e) => {
             return Err(Error::msg(format!("获取存储桶失败::{:?}", e.to_string())));
         }
@@ -131,29 +134,26 @@ pub async fn batch(
         assert_channel_buffer_size = 1024
     }
     let (tx_assert, rx_assert) = mpsc::channel(assert_channel_buffer_size);
-    // 开启一个任务，做断言的生产消费
-    if api_endpoints
-        .clone()
-        .into_iter()
-        .any(|item| item.assert_options.is_some())
-    {
+    // 是否有接口配置了断言
+    let has_assert = api_endpoints
+        .iter()
+        .any(|item| item.assert_options.is_some());
+    // 开启 N 个并发 worker 消费断言队列 (MPMC, 不再 oneshot 等待)
+    let assert_worker_handles: Vec<tokio::task::JoinHandle<()>> = if has_assert {
         if verbose {
-            println!("开启断言消费任务");
+            println!("开启 {} 个断言消费 worker", ASSERT_WORKER_COUNT);
         };
-        tokio::spawn(listening_assert::listening_assert(rx_assert));
+        listening_assert::spawn_assert_workers(rx_assert, ASSERT_WORKER_COUNT)
+    } else {
+        // 没有断言需求时, 立即关闭 receiver 防止泄漏
+        drop(rx_assert);
+        Vec::new()
     };
-    // 用arc包装每一个endpoint
-    let api_endpoints_arc: Vec<Arc<Mutex<ApiEndpoint>>> = api_endpoints
-        .into_iter()
-        .map(|endpoint| Arc::new(Mutex::new(endpoint)))
-        .collect();
+    // endpoint 在初始化阶段完成 url 模板渲染后冻结为 Arc<ApiEndpoint>
     // 开始测试时间
     let test_start = Instant::now();
     // 测试结束时间
     let test_end = test_start + Duration::from_secs(test_duration_secs);
-    // 每个接口的测试结果
-    let results: Vec<ApiResult> = Vec::new();
-    let results_arc = Arc::new(Mutex::new(results));
     // user_agent
     let info = os_info::get();
     let os_type = info.os_type();
@@ -223,72 +223,52 @@ pub async fn batch(
     let extract_map_arc = Arc::new(extract_map);
     // 复用Handlebars实例
     let handlebars = Handlebars::new();
+    // 收集每个 endpoint 的 stats, 让 collect_results / 最终结果从原子快照组装 ApiResult
+    let mut api_endpoint_stats: Vec<Arc<ApiEndpointStats>> = Vec::new();
     // 针对每一个接口开始配置
-    for (index, endpoint_arc) in api_endpoints_arc.clone().into_iter().enumerate() {
-        let endpoint = endpoint_arc.lock().await;
-        let weight = endpoint.weight.clone();
+    for (_index, mut endpoint) in api_endpoints.into_iter().enumerate() {
+        let weight = endpoint.weight;
         let name = endpoint.name.clone();
         let api_url = match is_need_render_template {
-            true => {
-                // 使用模版替换cookies
-                match handlebars.render_template(
-                    &*endpoint.url.clone(),
-                    &json!(*extract_map_arc),
-                ) {
-                    Ok(c) => c,
-                    Err(e) => {
-                        engine_errors.lock().await.push(format!("URL模板渲染失败: {:?}", e));
-                        endpoint.url.clone()
-                    }
+            true => match handlebars.render_template(&endpoint.url, &json!(*extract_map_arc)) {
+                Ok(c) => c,
+                Err(e) => {
+                    engine_errors
+                        .lock()
+                        .await
+                        .push(format!("URL模板渲染失败: {:?}", e));
+                    endpoint.url.clone()
                 }
-            }
+            },
             false => endpoint.url.clone(),
         };
-        drop(endpoint);
+        // 将渲染后的 url 写回 endpoint, 之后全程只读
+        endpoint.url = api_url.clone();
         // 计算权重比例
         let weight_ratio = weight as f64 / total_weight as f64;
         // 计算每个接口的并发量
         let mut concurrency_for_endpoint =
             ((concurrent_requests as f64) * weight_ratio).round() as usize;
-        // 如果这个接口的并发量四舍五入成0了， 就把他定为1
         if concurrency_for_endpoint == 0 {
             concurrency_for_endpoint = 1
         }
-        // 接口数据的统计
-        let api_histogram = match Histogram::new(14, 20) {
-            Ok(h) => Arc::new(Mutex::new(h)),
+        // 接口 histogram (AtomicHistogram, 无锁)
+        let api_histogram = match AtomicHistogram::new(14, 20) {
+            Ok(h) => Arc::new(h),
             Err(e) => return Err(Error::msg(format!("获取存储桶失败::{:?}", e.to_string()))),
         };
-        // 接口成功数据统计
-        let api_successful_requests = Arc::new(AtomicUsize::new(0));
-        // 接口请求总数统计
-        let api_total_requests = Arc::new(AtomicUsize::new(0));
-        // 接口统计最大响应时间
-        let api_max_response_time = Arc::new(AtomicU64::new(0));
-        // 接口统计最小响应时间
-        let api_min_response_time = Arc::new(AtomicU64::new(u64::MAX));
-        // 接口统计错误数量
-        let api_err_count = Arc::new(AtomicUsize::new(0));
-        // 接口并发数统计
-        let api_concurrent_number = Arc::new(AtomicUsize::new(0));
-        // 接口响应大小
-        let api_total_response_size = Arc::new(AtomicUsize::new(0));
-        // 接口总响应时间
-        let api_total_response_time_ms = Arc::new(AtomicU64::new(0));
-        // 初始化api结果
-        let mut init_api_res = ApiResult::new();
-        init_api_res.name = name.clone();
-        init_api_res.url = api_url.clone();
-        init_api_res.method = endpoint_arc.lock().await.method.clone().to_uppercase();
-        // 包装初始化好的接口信息
-        let api_result = Arc::new(Mutex::new(init_api_res.clone()));
-        // 将初始化好的接口信息添加到list中
-        results_arc.lock().await.push(init_api_res);
-        // 根据step初始化并发控制器
+        // 所有 per-endpoint 统计合并到 ApiEndpointStats, 热路径只做原子操作 + histogram 短锁
+        let stats = Arc::new(ApiEndpointStats::new(
+            name.clone(),
+            api_url.clone(),
+            endpoint.method.clone().to_uppercase(),
+            api_histogram,
+        ));
+        api_endpoint_stats.push(Arc::clone(&stats));
+        // 根据 step 初始化并发控制器
         let controller = match step_option.clone() {
             None => Arc::new(ConcurrencyController::new(concurrency_for_endpoint, None)),
             Some(option) => {
-                // 计算每个接口的步长
                 let step = option.increase_step as f64 * weight_ratio;
                 Arc::new(ConcurrencyController::new(
                     concurrency_for_endpoint,
@@ -299,61 +279,49 @@ pub async fn batch(
                 ))
             }
         };
-        // 后台启动并发控制器
         tokio::spawn({
             let controller_clone = Arc::clone(&controller);
             async move {
                 controller_clone.distribute_permits().await;
             }
         });
-        // 将新url替换到每个接口中
-        endpoint_arc.lock().await.url = api_url.clone();
+        // 冻结 endpoint 为只读 Arc
+        let endpoint_arc: Arc<ApiEndpoint> = Arc::new(endpoint);
         for _ in 0..concurrency_for_endpoint {
-            // 开启并发
             let handle: JoinHandle<Result<(), Error>> =
                 tokio::spawn(start_task::start_concurrency(
-                    client.clone(),                       // http客户端
-                    Arc::clone(&controller),              // 并发控制器
-                    Arc::clone(&api_concurrent_number),   // api并发数
-                    Arc::clone(&concurrent_number),       // 总并发数
-                    Arc::clone(&extract_map_arc),         // 断言替换字典
-                    Arc::clone(&endpoint_arc),            // 接口数据
-                    Arc::clone(&total_requests),          // 总请求数
-                    Arc::clone(&api_total_requests),      // api请求数
-                    Arc::clone(&histogram),               // 总统计桶
-                    Arc::clone(&api_histogram),           // api统计桶
-                    Arc::clone(&max_response_time),       // 最大响应时间
-                    Arc::clone(&api_max_response_time),   // 接口最大响应时间
-                    Arc::clone(&min_response_time),       // 最小响应时间
-                    Arc::clone(&api_min_response_time),   // api最小响应时间
-                    Arc::clone(&total_response_size),     // 总响应数据
-                    Arc::clone(&api_total_response_size), // api响应数据
-                    Arc::clone(&total_response_time_ms),  // 总响应时间
-                    Arc::clone(&api_total_response_time_ms), // api总响应时间
-                    Arc::clone(&api_err_count),           // api错误数
-                    Arc::clone(&successful_requests),     // 成功数量
-                    Arc::clone(&err_count),               // 错误数量
-                    Arc::clone(&http_errors),             // http错误统计
-                    Arc::clone(&assert_errors),           // 断言错误统计
-                    Arc::clone(&api_successful_requests), // api成功数量
-                    Arc::clone(&api_result),              // 接口详细统计
-                    Arc::clone(&results_arc),             // 最终响应结果
-                    tx_assert.clone(),                    // 断言通道
-                    test_start,                           // 测试开始时间
-                    test_end,                             // 测试结束时间
-                    is_need_render_template,              // 是否需要读取模板
-                    verbose,                              // 是否打印详情
-                    index,                                // 索引
-                    Arc::clone(&should_stop_flag),        // 停止信号
-                    data_pool_arc.clone(),                // 数据池
-                    Arc::clone(&engine_errors),           // 引擎错误收集
+                    client.clone(),
+                    Arc::clone(&controller),
+                    Arc::clone(&concurrent_number),
+                    Arc::clone(&extract_map_arc),
+                    Arc::clone(&endpoint_arc),
+                    Arc::clone(&stats),
+                    Arc::clone(&total_requests),
+                    Arc::clone(&histogram),
+                    Arc::clone(&max_response_time),
+                    Arc::clone(&min_response_time),
+                    Arc::clone(&total_response_size),
+                    Arc::clone(&total_response_time_ms),
+                    Arc::clone(&successful_requests),
+                    Arc::clone(&err_count),
+                    Arc::clone(&http_errors),
+                    Arc::clone(&assert_errors),
+                    tx_assert.clone(),
+                    test_start,
+                    test_end,
+                    is_need_render_template,
+                    verbose,
+                    Arc::clone(&should_stop_flag),
+                    data_pool_arc.clone(),
+                    Arc::clone(&engine_errors),
                 ));
             handles.push(handle);
         }
-        // println!("err count:{:?}",api_err_count.lock().await);
     }
+    // 主 batch 不再持有发送端, 让 worker 侧的 drop 更确定地传播关闭信号
+    drop(tx_assert);
 
-    // 共享任务状态
+    // 共享任务状态: collect_results 每秒 tick 时从 api_endpoint_stats 的原子+histogram 快照组装 ApiResult
     tokio::spawn(share_result::collect_results(
         result_sender,
         should_stop_rx,
@@ -367,7 +335,7 @@ pub async fn batch(
         Arc::clone(&max_response_time),
         Arc::clone(&min_response_time),
         Arc::clone(&assert_errors),
-        Arc::clone(&results_arc),
+        api_endpoint_stats.clone(),
         Arc::clone(&concurrent_number),
         Arc::clone(&dura),
         Arc::clone(&number_of_last_requests),
@@ -404,6 +372,13 @@ pub async fn batch(
             }
         };
     }
+    // 此刻所有 task 都已退出, 它们持有的 tx_assert 全部释放 → 断言 channel 关闭
+    // 等待 N 个 assert worker 把队列里剩余的任务消化干净, 保证最终统计不丢
+    if !assert_worker_handles.is_empty() {
+        for h in assert_worker_handles {
+            let _ = h.await;
+        }
+    }
 
     // 执行全局teardown
     if let Some(teardown_opts) = teardown_options {
@@ -421,48 +396,50 @@ pub async fn batch(
         }
     }
 
-    // 对结果进行赋值
-    let err_count_clone = Arc::clone(&err_count);
-    let err_count = err_count_clone.load(Ordering::SeqCst);
+    // 最终结果: 完全从原子 + histogram 快照组装, 不再依赖中间 results_arc
+    let err_count_final = err_count.load(Ordering::SeqCst);
     let total_duration = (Instant::now() - test_start).as_secs_f64();
-    let total_requests = total_requests.load(Ordering::SeqCst) as u64;
-    let successful_requests = successful_requests.load(Ordering::SeqCst) as f64;
-    let success_rate = successful_requests / total_requests as f64 * 100.0;
-    let histogram = histogram.lock().await;
+    let total_requests_final = total_requests.load(Ordering::SeqCst) as u64;
+    let successful_requests_final = successful_requests.load(Ordering::SeqCst) as f64;
+    let success_rate = if total_requests_final > 0 {
+        successful_requests_final / total_requests_final as f64 * 100.0
+    } else {
+        0.0
+    };
+    let error_rate = if total_requests_final > 0 {
+        err_count_final as f64 / total_requests_final as f64 * 100.0
+    } else {
+        0.0
+    };
     let total_response_size_kb = total_response_size.load(Ordering::SeqCst) as f64 / 1024.0;
     let throughput_kb_s = total_response_size_kb / test_duration_secs as f64;
-    let http_errors = http_errors.lock().await.errors.clone();
-    let assert_errors = assert_errors.lock().await.errors.clone();
+    let http_errors_snapshot = http_errors.lock().await.errors.clone();
+    let assert_errors_snapshot = assert_errors.lock().await.errors.clone();
     let timestamp = match SystemTime::now().duration_since(UNIX_EPOCH) {
         Ok(n) => n.as_millis(),
         Err(_) => 0,
     };
-    let mut api_results = results_arc.lock().await;
-    for (index, res) in api_results.clone().into_iter().enumerate() {
-        let api_res = match api_rps_queue_arc.lock().await.clone().get(&res.name) {
-            None => 0f64,
-            Some(v) => v.average().await.unwrap_or_else(|| 0f64),
+    // 组装每个接口的 ApiResult: 从原子 + histogram 快照, 再用 rps_queue 覆盖 rps
+    let api_rps_queue_snapshot = api_rps_queue_arc.lock().await.clone();
+    let mut api_results_final = Vec::with_capacity(api_endpoint_stats.len());
+    for stats in api_endpoint_stats.iter() {
+        let mut snap = share_result::snapshot_api_result(stats.as_ref(), total_duration).await;
+        // 优先用 rps_queue 的平滑平均; 拿不到再 fallback 到 total / duration
+        let rps = match api_rps_queue_snapshot.get(&snap.name) {
+            Some(q) => q.average().await.unwrap_or(0.0),
+            None => 0.0,
         };
-        api_results[index].rps = api_res;
-    }
-    // 计算每个接口的rps,host, path
-    for (index, res) in api_results.clone().into_iter().enumerate() {
-        // 计算每个接口的rps
-        let rps = res.total_requests as f64 / total_duration;
-        api_results[index].rps = rps;
-        // 计算每个接口的HOST，PATH
-        if let Ok(url) = Url::parse(&*res.url) {
-            if let Some(host) = url.host() {
-                api_results[index].host = host.to_string();
-            };
-            api_results[index].path = url.path().to_string();
+        snap.rps = if rps > 0.0 {
+            rps
+        } else if total_duration > 0.0 {
+            snap.total_requests as f64 / total_duration
+        } else {
+            0.0
         };
+        api_results_final.push(snap);
     }
-    let error_rate = err_count as f64 / total_requests as f64 * 100.0;
-    let total_concurrent_number_clone = concurrent_number.load(Ordering::SeqCst) as i32;
-    // 总错误数量减去上一次错误数量得出增量
-    let errors_per_second = err_count - number_of_last_errors.load(Ordering::SeqCst);
-    // 将增量累加到上一次错误数量
+    let total_concurrent_number_final = concurrent_number.load(Ordering::SeqCst) as i32;
+    let errors_per_second = err_count_final - number_of_last_errors.load(Ordering::SeqCst);
     number_of_last_errors.fetch_add(errors_per_second, Ordering::Relaxed);
     let rps = rps_queue_arc
         .lock()
@@ -470,49 +447,50 @@ pub async fn batch(
         .average()
         .await
         .unwrap_or_else(|| 0f64);
-    // 将增量累加
     number_of_last_requests.fetch_add(rps as usize, Ordering::Relaxed);
-    // 数据池统计
     let data_pool_stats = data_pool.as_ref().map(|dp| dp.get_stats());
-    // 最终结果
+    // AtomicHistogram 无锁 snapshot, 再读三个 percentile
+    let (median_response_time, response_time_95, response_time_99) = {
+        let snapshot = histogram.load();
+        let p50 = match snapshot.percentile(50.0) {
+            Ok(b) => *b.range().start(),
+            Err(e) => return Err(Error::msg(format!("获取50线失败::{:?}", e.to_string()))),
+        };
+        let p95 = match snapshot.percentile(95.0) {
+            Ok(b) => *b.range().start(),
+            Err(e) => return Err(Error::msg(format!("获取95线失败::{:?}", e.to_string()))),
+        };
+        let p99 = match snapshot.percentile(99.0) {
+            Ok(b) => *b.range().start(),
+            Err(e) => return Err(Error::msg(format!("获取99线失败::{:?}", e.to_string()))),
+        };
+        (p50, p95, p99)
+    };
     let result = Ok(BatchResult {
         total_duration,
         success_rate,
         error_rate,
-        median_response_time: match histogram.percentile(50.0) {
-            Ok(b) => *b.range().start(),
-            Err(e) => {
-                return Err(Error::msg(format!("获取50线失败::{:?}", e.to_string())));
-            }
-        },
-        response_time_95: match histogram.percentile(95.0) {
-            Ok(b) => *b.range().start(),
-            Err(e) => {
-                return Err(Error::msg(format!("获取95线失败::{:?}", e.to_string())));
-            }
-        },
-        response_time_99: match histogram.percentile(99.0) {
-            Ok(b) => *b.range().start(),
-            Err(e) => {
-                return Err(Error::msg(format!("获取99线失败::{:?}", e.to_string())));
-            }
-        },
-        total_requests,
+        median_response_time,
+        response_time_95,
+        response_time_99,
+        total_requests: total_requests_final,
         rps,
         max_response_time: max_response_time.load(Ordering::SeqCst),
         min_response_time: min_response_time.load(Ordering::SeqCst),
-        err_count: err_count_clone.load(Ordering::SeqCst) as i32,
+        err_count: err_count_final as i32,
         total_data_kb: total_response_size_kb,
         throughput_per_second_kb: throughput_kb_s,
-        http_errors: http_errors.lock().await.clone(),
+        http_errors: http_errors_snapshot.lock().await.clone(),
         timestamp,
-        assert_errors: assert_errors.lock().await.clone(),
-        total_concurrent_number: total_concurrent_number_clone,
-        api_results: api_results.to_vec().clone(),
+        assert_errors: assert_errors_snapshot.lock().await.clone(),
+        total_concurrent_number: total_concurrent_number_final,
+        api_results: api_results_final,
         errors_per_second,
         data_pool_stats,
-        avg_response_time: if total_requests > 0 {
-            (total_response_time_ms.load(Ordering::SeqCst) as f64 / total_requests as f64).round() as u64
+        avg_response_time: if total_requests_final > 0 {
+            (total_response_time_ms.load(Ordering::SeqCst) as f64
+                / total_requests_final as f64)
+                .round() as u64
         } else {
             0
         },

@@ -3,7 +3,6 @@ use crate::models::assert_error_stats::AssertErrorStats;
 use crate::models::assert_option::AssertOption;
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
-use tokio::sync::oneshot;
 use tokio::sync::Mutex;
 
 #[derive(Debug)]
@@ -14,9 +13,8 @@ pub struct AssertTask {
     pub(crate) err_count: Arc<AtomicUsize>,
     pub(crate) api_err_count: Arc<AtomicUsize>,
     pub(crate) assert_errors: Arc<Mutex<AssertErrorStats>>,
-    pub(crate) endpoint: Arc<Mutex<ApiEndpoint>>,
+    pub(crate) endpoint: Arc<ApiEndpoint>,
     pub(crate) api_name: String,
     pub(crate) successful_requests: Arc<AtomicUsize>,
     pub(crate) api_successful_requests: Arc<AtomicUsize>,
-    pub(crate) completion_signal: oneshot::Sender<()>,
 }

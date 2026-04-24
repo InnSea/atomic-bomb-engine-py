@@ -1,15 +1,15 @@
 use crate::core::concurrency_controller::ConcurrencyController;
 use crate::core::setup;
 use crate::models::api_endpoint::ApiEndpoint;
+use crate::models::api_endpoint_stats::ApiEndpointStats;
 use crate::models::assert_error_stats::AssertErrorStats;
 use crate::models::assert_task::AssertTask;
 use crate::models::data_pool::DataPool;
 use crate::models::http_error_stats::HttpErrorStats;
-use crate::models::result::ApiResult;
 use anyhow::Error;
 use futures::StreamExt;
 use handlebars::Handlebars;
-use histogram::Histogram;
+use histogram::AtomicHistogram;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, COOKIE};
@@ -23,41 +23,30 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 use tokio::sync::mpsc::Sender;
-use tokio::sync::{oneshot, Mutex};
+use tokio::sync::Mutex;
 
 pub(crate) async fn start_concurrency(
     client: Client,
     controller_arc: Arc<ConcurrencyController>,
-    api_concurrent_number_arc: Arc<AtomicUsize>,
     concurrent_number_arc: Arc<AtomicUsize>,
     extract_map_arc: Arc<BTreeMap<String, Value>>,
-    endpoint_arc: Arc<Mutex<ApiEndpoint>>,
+    endpoint_arc: Arc<ApiEndpoint>,
+    api_stats: Arc<ApiEndpointStats>,
     total_requests_arc: Arc<AtomicUsize>,
-    api_total_requests_arc: Arc<AtomicUsize>,
-    histogram_arc: Arc<Mutex<Histogram>>,
-    api_histogram_arc: Arc<Mutex<Histogram>>,
+    histogram_arc: Arc<AtomicHistogram>,
     max_response_time_arc: Arc<AtomicU64>,
-    api_max_response_time_arc: Arc<AtomicU64>,
     min_response_time_arc: Arc<AtomicU64>,
-    api_min_response_time_arc: Arc<AtomicU64>,
     total_response_size_arc: Arc<AtomicUsize>,
-    api_total_response_size_arc: Arc<AtomicUsize>,
     total_response_time_ms_arc: Arc<AtomicU64>,
-    api_total_response_time_ms_arc: Arc<AtomicU64>,
-    api_err_count_arc: Arc<AtomicUsize>,
     successful_requests_arc: Arc<AtomicUsize>,
     err_count_arc: Arc<AtomicUsize>,
     http_errors_arc: Arc<Mutex<HttpErrorStats>>,
     assert_errors_arc: Arc<Mutex<AssertErrorStats>>,
-    api_successful_requests_arc: Arc<AtomicUsize>,
-    api_result_arc: Arc<Mutex<ApiResult>>,
-    results_arc: Arc<Mutex<Vec<ApiResult>>>,
     tx_assert: Sender<AssertTask>,
     test_start: Instant,
     test_end: Instant,
     is_need_render_template: bool,
     verbose: bool,
-    index: usize,
     should_stop: Arc<std::sync::atomic::AtomicBool>,
     data_pool: Option<Arc<DataPool>>,
     engine_errors: Arc<Mutex<Vec<String>>>,
@@ -80,50 +69,43 @@ pub(crate) async fn start_concurrency(
             }
         }
     }
+    // 避免在热路径反复读字段, 拿引用就好
+    let _ = test_start; // 保留给未来使用, 同时避免 unused 警告
 
     let mut is_need_render = is_need_render_template;
     let semaphore = controller_arc.get_semaphore();
     let _permit = semaphore.acquire().await.expect("获取信号量许可失败");
 
-    let endpoint_snapshot = endpoint_arc.lock().await.clone();
-    let api_name_clone = endpoint_snapshot.name.clone();
-    let method_clone = endpoint_snapshot.method.clone();
-    let json_obj_base = endpoint_snapshot.json.clone();
-    let form_data_base = endpoint_snapshot.form_data.clone();
-    let multipart_base = endpoint_snapshot.multipart_options.clone();
-    let headers_base = endpoint_snapshot.headers.clone();
-    let cookie_base = endpoint_snapshot.cookies.clone();
-    let assert_options_base = endpoint_snapshot.assert_options.clone();
-    let think_time_base = endpoint_snapshot.think_time_option.clone();
-    let api_setup_base = endpoint_snapshot.setup_options.clone();
-    let api_teardown_base = endpoint_snapshot.teardown_options.clone();
-    let endpoint_url = endpoint_snapshot.url.clone();
-    // 统计并发数
-    // 将接口并发数+1并返回当前并发数
-    let api_current_concurrency =
-        api_concurrent_number_arc.fetch_add(1, Ordering::Relaxed) as i32 + 1;
-    // 将总并发数+1
+    // endpoint_arc: Arc<ApiEndpoint> 只读, 直接按字段取
+    let api_name_clone = endpoint_arc.name.clone();
+    let method_clone = endpoint_arc.method.clone();
+    let json_obj_base = endpoint_arc.json.clone();
+    let form_data_base = endpoint_arc.form_data.clone();
+    let multipart_base = endpoint_arc.multipart_options.clone();
+    let headers_base = endpoint_arc.headers.clone();
+    let cookie_base = endpoint_arc.cookies.clone();
+    let assert_options_base = endpoint_arc.assert_options.clone();
+    let think_time_base = endpoint_arc.think_time_option.clone();
+    let api_setup_base = endpoint_arc.setup_options.clone();
+    let api_teardown_base = endpoint_arc.teardown_options.clone();
+    let endpoint_url = endpoint_arc.url.clone();
+
+    // 统计并发数(累计计数, 与原行为一致)
+    api_stats.concurrent_number.fetch_add(1, Ordering::Relaxed);
     concurrent_number_arc.fetch_add(1, Ordering::Relaxed);
-    // 将接口并发数添加到推送结果中
-    results_arc.lock().await[index].concurrent_number = api_current_concurrency;
-    // 复用Handlebars实例
+    // 复用 Handlebars 实例
     let handlebars = Handlebars::new();
     // 在到达结束时间后停止发送请求
     'RETRY: while Instant::now() < test_end && !should_stop.load(Ordering::SeqCst) {
-        // 设置api的提取器
         let mut api_extract_b_tree_map = BTreeMap::new();
-        // 将全局字典加入到api字典
         api_extract_b_tree_map.extend((*extract_map_arc).clone());
-        // 从数据池获取数据并加入到api字典
         if let Some(ref pool) = data_pool {
             let row_data = pool.get_next_row();
             for (key, value) in row_data {
                 api_extract_b_tree_map.insert(key, Value::String(value));
             }
         }
-        // 接口初始化副本
         let api_setup_clone = api_setup_base.clone();
-        // 接口前置初始化
         if let Some(setup_options) = api_setup_clone {
             is_need_render = true;
             match setup::start_setup(
@@ -150,43 +132,30 @@ pub(crate) async fn start_concurrency(
                 }
             };
         }
-        // json副本
         let json_obj_clone = json_obj_base.clone();
-        // form副本
         let form_data_clone = form_data_base.clone();
-        // multipart副本
         let multipart_clone = multipart_base.clone();
-        // headers副本
         let headers_clone = headers_base.clone();
-        // cookie副本
         let cookie_clone = cookie_base.clone();
-        // 断言副本
         let assert_options_clone = assert_options_base.clone();
-        // 思考时间副本
         let think_time_clone = think_time_base.clone();
-        // 构建请求方式
         let method = match Method::from_str(&method_clone.to_uppercase()) {
             Ok(m) => m,
             Err(e) => {
                 return Err(Error::msg(format!("构建请求方法失败:{:?}", e.to_string())));
             }
         };
-        // 构建请求
         let mut request = client.request(method, endpoint_url.clone());
-        // 构建请求头
         let mut headers = HeaderMap::new();
         if let Some(headers_map) = headers_clone {
             headers.extend(headers_map.iter().map(|(k, v)| {
                 let header_name = k.parse::<HeaderName>().expect("无效的header名称");
                 match is_need_render_template {
                     true => {
-                        // 将header的value模板进行填充
                         let new_val =
                             match handlebars.render_template(v, &json!(api_extract_b_tree_map)) {
                                 Ok(v) => v,
-                                Err(_) => {
-                                    v.to_string()
-                                }
+                                Err(_) => v.to_string(),
                             };
                         let header_value = new_val.parse::<HeaderValue>().expect("无效的header值");
                         (header_name.clone(), header_value)
@@ -198,21 +167,14 @@ pub(crate) async fn start_concurrency(
                 }
             }));
         }
-        // 构建cookies
         if let Some(ref source) = cookie_clone {
             let cookie_val = match is_need_render_template {
-                true => {
-                    // 使用模版替换cookies
-                    match handlebars.render_template(source, &json!(api_extract_b_tree_map)) {
-                        Ok(c) => c,
-                        Err(_) => {
-                            source.to_string()
-                        }
-                    }
-                }
+                true => match handlebars.render_template(source, &json!(api_extract_b_tree_map)) {
+                    Ok(c) => c,
+                    Err(_) => source.to_string(),
+                },
                 false => source.to_string(),
             };
-            // println!("{:?}", cookie_val);
             match HeaderValue::from_str(&cookie_val) {
                 Ok(h) => {
                     headers.insert(COOKIE, h);
@@ -221,52 +183,43 @@ pub(crate) async fn start_concurrency(
             }
         }
         request = request.headers(headers);
-        // 构建json请求
         if let Some(json_value) = json_obj_clone {
             let json_source = if json_value.is_string() {
                 json_value.as_str().unwrap().to_string()
             } else {
                 json_value.to_string()
             };
-            
+
             let json_val = match is_need_render_template {
                 true => {
-                    // 模板替换
                     let json_string = match handlebars
                         .render_template(&json_source, &json!(api_extract_b_tree_map))
                     {
                         Ok(j) => j,
-                        Err(_) => {
-                            json_source.clone()
-                        }
+                        Err(_) => json_source.clone(),
                     };
                     match Value::from_str(&json_string) {
                         Ok(val) => val,
                         Err(e) => {
                             return Err(Error::msg(format!(
                                 "转换json失败:{:?}, 原始json: {:?}",
-                                e,
-                                json_string
+                                e, json_string
                             )))
                         }
                     }
                 }
                 false => {
-                    // 不需要模板替换
                     if json_value.is_string() {
-                        // 如果是字符串，需要解析
                         match Value::from_str(&json_source) {
                             Ok(val) => val,
                             Err(e) => {
                                 return Err(Error::msg(format!(
                                     "转换json失败:{:?}, 原始json: {:?}",
-                                    e,
-                                    json_source
+                                    e, json_source
                                 )))
                             }
                         }
                     } else {
-                        // 如果是对象，直接使用
                         json_value
                     }
                 }
@@ -276,28 +229,21 @@ pub(crate) async fn start_concurrency(
             };
             request = request.json(&json_val);
         }
-        // 构建form表单
         if let Some(mut form_data) = form_data_clone {
             if is_need_render {
-                // 将模版填充
                 form_data.iter_mut().for_each(|(_key, value)| {
                     let new_val =
                         match handlebars.render_template(value, &json!(api_extract_b_tree_map)) {
                             Ok(v) => v,
-                            Err(_) => {
-                                value.to_string()
-                            }
+                            Err(_) => value.to_string(),
                         };
                     *value = new_val;
                 })
             };
             request = request.form(&form_data);
         };
-        // 构建multipart表单
         if let Some(multipart_options) = multipart_clone {
-            // 初始化multipart表单
             let mut multipart_form = multipart::Form::new();
-            // 构建multipart表单
             for mo in multipart_options {
                 let file = match tokio::fs::File::open(mo.path).await {
                     Ok(f) => f,
@@ -321,8 +267,6 @@ pub(crate) async fn start_concurrency(
         if verbose {
             println!("{:?}", request);
         };
-        // println!("{:?}", request);
-        // 如果有思考时间，暂时不发送请求，先等待
         if let Some(think_time) = think_time_clone {
             match think_time.min_millis <= think_time.max_millis {
                 true => {
@@ -339,20 +283,14 @@ pub(crate) async fn start_concurrency(
                 }
             }
         }
-        // 记录开始时间
         let start = Instant::now();
-        // 发送请求
         match request.send().await {
             Ok(response) => {
-                // 总请求数
                 total_requests_arc.fetch_add(1, Ordering::Relaxed);
-                // api请求数
-                api_total_requests_arc.fetch_add(1, Ordering::Relaxed);
-                // 获取状态码
+                api_stats.total_requests.fetch_add(1, Ordering::Relaxed);
                 let status = response.status();
                 let url_parse = response.url().clone();
                 match status {
-                    // 正确的状态码
                     StatusCode::OK
                     | StatusCode::CREATED
                     | StatusCode::ACCEPTED
@@ -371,59 +309,46 @@ pub(crate) async fn start_concurrency(
                     | StatusCode::USE_PROXY
                     | StatusCode::TEMPORARY_REDIRECT
                     | StatusCode::PERMANENT_REDIRECT => {
-                        // 请求成功的情况
-                        // 响应时间
                         let duration = start.elapsed().as_millis() as u64;
-                        // 累加总响应时间
                         total_response_time_ms_arc.fetch_add(duration, Ordering::Relaxed);
-                        api_total_response_time_ms_arc.fetch_add(duration, Ordering::Relaxed);
-                        // api统计桶
-                        let mut api_histogram = api_histogram_arc.lock().await;
-                        // 最大请求时间（无锁原子操作）
+                        api_stats
+                            .total_response_time_ms
+                            .fetch_add(duration, Ordering::Relaxed);
                         atomic_max(&max_response_time_arc, duration);
-                        // api最大请求时间
-                        atomic_max(&api_max_response_time_arc, duration);
-                        // 最小响应时间
+                        atomic_max(&api_stats.max_response_time, duration);
                         atomic_min(&min_response_time_arc, duration);
-                        // api最小响应时间
-                        atomic_min(&api_min_response_time_arc, duration);
-                        // 将数据放入全局统计桶
-                        let _ = histogram_arc.lock().await.increment(duration);
-                        // 将数据放入api统计桶
-                        let _ = api_histogram.increment(duration);
-                        // 获取响应头
+                        atomic_min(&api_stats.min_response_time, duration);
+                        // AtomicHistogram: 无锁原子 increment
+                        let _ = api_stats.histogram.increment(duration);
+                        let _ = histogram_arc.increment(duration);
                         let resp_headers = response.headers();
-                        // 计算响应头大小
                         let headers_size = resp_headers.iter().fold(0, |acc, (name, value)| {
                             acc + name.as_str().len() + 2 + value.as_bytes().len() + 2
                         });
-                        // 将响应头的大小加入到总大小中
-                        {
-                            total_response_size_arc.fetch_add(headers_size, Ordering::Relaxed);
-                            api_total_response_size_arc.fetch_add(headers_size, Ordering::Relaxed);
-                        }
-                        // 响应流
+                        total_response_size_arc.fetch_add(headers_size, Ordering::Relaxed);
+                        api_stats
+                            .total_response_size
+                            .fetch_add(headers_size, Ordering::Relaxed);
+                        // 响应流 - 完全无锁
                         let mut stream = response.bytes_stream();
-                        // 根据是否有自定义断言决定是否缓存响应体
                         let need_body = assert_options_clone.is_some() || verbose;
                         let mut body_bytes = Vec::new();
                         let mut stream_error = false;
                         while let Some(item) = stream.next().await {
                             match item {
                                 Ok(chunk) => {
-                                    // 统计响应大小
                                     total_response_size_arc
                                         .fetch_add(chunk.len(), Ordering::Relaxed);
-                                    api_total_response_size_arc
+                                    api_stats
+                                        .total_response_size
                                         .fetch_add(chunk.len(), Ordering::Relaxed);
-                                    // 仅在需要断言或verbose时缓存响应体
                                     if need_body {
                                         body_bytes.extend_from_slice(&chunk);
                                     }
                                 }
                                 Err(e) => {
                                     stream_error = true;
-                                    api_err_count_arc.fetch_add(1, Ordering::Relaxed);
+                                    api_stats.err_count.fetch_add(1, Ordering::Relaxed);
                                     err_count_arc.fetch_add(1, Ordering::Relaxed);
                                     http_errors_arc
                                         .lock()
@@ -451,163 +376,76 @@ pub(crate) async fn start_concurrency(
                                 .expect("无法转换响应体为字符串");
                             println!("{:+?}", buffer);
                         }
-                        // 断言
-                        if stream_error {
-                            // 流读取出错，不做断言也不计入成功
-                        } else {
-                        match assert_options_clone {
-                            Some(assert_options) => {
-                                // 没有获取到响应体，就不进行断言
-                                if body_bytes.len() > 0 {
-                                    // 一次性通道，用于确定断言任务被消费完成后再进行数据同步
-                                    let (oneshot_tx, oneshot_rx) = oneshot::channel();
-                                    // 实例化任务
-                                    let task = AssertTask {
-                                        assert_options: assert_options.clone(),
-                                        body_bytes,
-                                        verbose,
-                                        err_count: err_count_arc.clone(),
-                                        api_err_count: api_err_count_arc.clone(),
-                                        assert_errors: assert_errors_arc.clone(),
-                                        endpoint: endpoint_arc.clone(),
-                                        api_name: api_name_clone.clone(),
-                                        successful_requests: successful_requests_arc.clone(),
-                                        api_successful_requests: api_successful_requests_arc
-                                            .clone(),
-                                        completion_signal: oneshot_tx,
+                        // 断言 - 异步 fire-and-forget, 不再 oneshot 等待
+                        if !stream_error {
+                            match assert_options_clone {
+                                Some(assert_options) => {
+                                    if body_bytes.len() > 0 {
+                                        let task = AssertTask {
+                                            assert_options: assert_options.clone(),
+                                            body_bytes,
+                                            verbose,
+                                            err_count: err_count_arc.clone(),
+                                            api_err_count: api_stats.err_count.clone(),
+                                            assert_errors: assert_errors_arc.clone(),
+                                            endpoint: endpoint_arc.clone(),
+                                            api_name: api_name_clone.clone(),
+                                            successful_requests: successful_requests_arc.clone(),
+                                            api_successful_requests: api_stats
+                                                .successful_requests
+                                                .clone(),
+                                        };
+                                        tx_assert.send(task).await.expect("生产断言任务失败");
                                     };
-                                    // 存在断言数据将任务生产到队列中
-                                    tx_assert.send(task).await.expect("生产断言任务失败");
-                                    // 等待任务消费完成后再进行后面的赋值操作，用于数据同步
-                                    oneshot_rx.await.expect("任务完成信号失败");
-                                };
-                            }
-                            None => {
-                                // 状态码已校验为2xx/3xx，没有自定义断言时直接计入成功
-                                successful_requests_arc.fetch_add(1, Ordering::Relaxed);
-                                api_successful_requests_arc.fetch_add(1, Ordering::Relaxed);
-                            }
-                        };
-                        } // end of stream_error check
-                        // 给结果赋值
-                        {
-                            let api_total_data_bytes =
-                                api_total_response_size_arc.load(Ordering::SeqCst);
-                            let api_total_data_kb = api_total_data_bytes as f64 / 1024f64;
-                            let api_total_requests =
-                                api_total_requests_arc.load(Ordering::SeqCst) as u64;
-                            let api_success_requests =
-                                api_successful_requests_arc.load(Ordering::SeqCst);
-                            let api_success_rate =
-                                api_success_requests as f64 / api_total_requests as f64 * 100.0;
-                            let throughput_per_second_kb =
-                                api_total_data_kb / (Instant::now() - test_start).as_secs_f64();
-
-                            let mut api_res = api_result_arc.lock().await;
-                            api_res.response_time_95 = match api_histogram.percentile(95.0) {
-                                Ok(b) => *b.range().start(),
-                                Err(e) => {
-                                    return Err(Error::msg(format!(
-                                        "获取95线失败::{:?}",
-                                        e.to_string()
-                                    )));
                                 }
-                            };
-                            api_res.response_time_99 = match api_histogram.percentile(99.0) {
-                                Ok(b) => *b.range().start(),
-                                Err(e) => {
-                                    return Err(Error::msg(format!(
-                                        "获取99线失败::{:?}",
-                                        e.to_string()
-                                    )));
+                                None => {
+                                    successful_requests_arc.fetch_add(1, Ordering::Relaxed);
+                                    api_stats
+                                        .successful_requests
+                                        .fetch_add(1, Ordering::Relaxed);
                                 }
-                            };
-                            api_res.median_response_time = match api_histogram.percentile(50.0) {
-                                Ok(b) => *b.range().start(),
-                                Err(e) => {
-                                    return Err(Error::msg(format!(
-                                        "获取50线失败::{:?}",
-                                        e.to_string()
-                                    )));
-                                }
-                            };
-                            api_res.max_response_time = api_max_response_time_arc.load(Ordering::SeqCst);
-                            api_res.min_response_time = api_min_response_time_arc.load(Ordering::SeqCst);
-                            api_res.total_requests = api_total_requests;
-                            api_res.total_data_kb = api_total_data_kb;
-                            api_res.success_rate = api_success_rate;
-                            api_res.err_count = api_err_count_arc.load(Ordering::SeqCst) as i32;
-                            api_res.throughput_per_second_kb = throughput_per_second_kb;
-                            api_res.error_rate =
-                                api_res.err_count as f64 / api_res.total_requests as f64 * 100.0;
-                            api_res.concurrent_number =
-                                api_concurrent_number_arc.load(Ordering::SeqCst) as i32;
-                            api_res.avg_response_time = if api_total_requests > 0 {
-                                (api_total_response_time_ms_arc.load(Ordering::SeqCst) as f64 / api_total_requests as f64).round() as u64
-                            } else {
-                                0
-                            };
-                            // 向最终结果中添加数据
-                            let mut res = results_arc.lock().await;
-                            match index < res.len() {
-                                true => {
-                                    res[index] = api_res.clone();
-                                }
-                                false => {}
                             };
                         }
-                        // println!("res:{:?}", res);
                     }
                     // 状态码错误
                     _ => {
-                        // 响应时间
                         let duration = start.elapsed().as_millis() as u64;
-                        // 累加总响应时间
                         total_response_time_ms_arc.fetch_add(duration, Ordering::Relaxed);
-                        api_total_response_time_ms_arc.fetch_add(duration, Ordering::Relaxed);
+                        api_stats
+                            .total_response_time_ms
+                            .fetch_add(duration, Ordering::Relaxed);
                         err_count_arc.fetch_add(1, Ordering::Relaxed);
-                        api_err_count_arc.fetch_add(1, Ordering::Relaxed);
+                        api_stats.err_count.fetch_add(1, Ordering::Relaxed);
                         let status_code = u16::from(response.status());
-                        let mut api_histogram = api_histogram_arc.lock().await;
-                        // 最大请求时间（无锁原子操作）
                         atomic_max(&max_response_time_arc, duration);
-                        // api最大请求时间
-                        atomic_max(&api_max_response_time_arc, duration);
-                        // 最小响应时间
+                        atomic_max(&api_stats.max_response_time, duration);
                         atomic_min(&min_response_time_arc, duration);
-                        // api最小响应时间
-                        atomic_min(&api_min_response_time_arc, duration);
-                        // 将数据放入全局统计桶
-                        let _ = histogram_arc.lock().await.increment(duration);
-                        // 将数据放入api统计桶
-                        let _ = api_histogram.increment(duration);
-                        // 获取响应头
+                        atomic_min(&api_stats.min_response_time, duration);
+                        // AtomicHistogram: 无锁原子 increment
+                        let _ = api_stats.histogram.increment(duration);
+                        let _ = histogram_arc.increment(duration);
                         let resp_headers = response.headers();
-                        // 计算响应头大小
                         let headers_size = resp_headers.iter().fold(0, |acc, (name, value)| {
                             acc + name.as_str().len() + 2 + value.as_bytes().len() + 2
                         });
-                        // 将响应头的大小加入到总大小中
-                        {
-                            total_response_size_arc.fetch_add(headers_size, Ordering::Relaxed);
-                            api_total_response_size_arc.fetch_add(headers_size, Ordering::Relaxed);
-                        }
-                        // 响应流
+                        total_response_size_arc.fetch_add(headers_size, Ordering::Relaxed);
+                        api_stats
+                            .total_response_size
+                            .fetch_add(headers_size, Ordering::Relaxed);
                         let mut stream = response.bytes_stream();
-                        // 响应体
                         let mut body_bytes = Vec::new();
                         while let Some(item) = stream.next().await {
                             match item {
                                 Ok(chunk) => {
-                                    // 获取当前的chunk
                                     total_response_size_arc
                                         .fetch_add(chunk.len(), Ordering::Relaxed);
-                                    api_total_response_size_arc
+                                    api_stats
+                                        .total_response_size
                                         .fetch_add(chunk.len(), Ordering::Relaxed);
                                     body_bytes.extend_from_slice(&chunk);
                                 }
                                 Err(e) => {
-                                    api_err_count_arc.fetch_add(1, Ordering::Relaxed);
+                                    api_stats.err_count.fetch_add(1, Ordering::Relaxed);
                                     err_count_arc.fetch_add(1, Ordering::Relaxed);
                                     http_errors_arc
                                         .lock()
@@ -630,23 +468,9 @@ pub(crate) async fn start_concurrency(
                                 }
                             };
                         }
-                        // 响应体副本
                         let body_bytes_clone = body_bytes.clone();
-                        // 将bytes转换为string
                         let buffer =
                             String::from_utf8(body_bytes_clone).expect("无法转换响应体为字符串");
-                        // 获取需要等待的对象
-                        let api_total_data_bytes =
-                            api_total_response_size_arc.load(Ordering::SeqCst);
-                        let api_total_data_kb = api_total_data_bytes as f64 / 1024f64;
-                        let api_total_requests =
-                            api_total_requests_arc.load(Ordering::SeqCst) as u64;
-                        let api_success_requests =
-                            api_successful_requests_arc.load(Ordering::SeqCst);
-                        let api_success_rate =
-                            api_success_requests as f64 / api_total_requests as f64 * 100.0;
-                        let throughput_per_second_kb =
-                            api_total_data_kb / (Instant::now() - test_start).as_secs_f64();
                         let err_msg =
                             format!("HTTP 错误: 状态码 {:?}, body:{:?}", status_code, buffer);
                         http_errors_arc
@@ -668,80 +492,18 @@ pub(crate) async fn start_concurrency(
                                 buffer
                             )
                         }
-                        // 给结果赋值
-                        {
-                            let mut api_res = api_result_arc.lock().await;
-                            api_res.response_time_95 = match api_histogram.percentile(95.0) {
-                                Ok(b) => *b.range().start(),
-                                Err(e) => {
-                                    return Err(Error::msg(format!(
-                                        "获取95线失败::{:?}",
-                                        e.to_string()
-                                    )));
-                                }
-                            };
-                            api_res.response_time_99 = match api_histogram.percentile(99.0) {
-                                Ok(b) => *b.range().start(),
-                                Err(e) => {
-                                    return Err(Error::msg(format!(
-                                        "获取99线失败::{:?}",
-                                        e.to_string()
-                                    )));
-                                }
-                            };
-                            api_res.median_response_time = match api_histogram.percentile(50.0) {
-                                Ok(b) => *b.range().start(),
-                                Err(e) => {
-                                    return Err(Error::msg(format!(
-                                        "获取50线失败::{:?}",
-                                        e.to_string()
-                                    )));
-                                }
-                            };
-                            api_res.max_response_time = api_max_response_time_arc.load(Ordering::SeqCst);
-                            api_res.min_response_time = api_min_response_time_arc.load(Ordering::SeqCst);
-                            api_res.total_requests = api_total_requests;
-                            api_res.total_data_kb = api_total_data_kb;
-                            api_res.success_rate = api_success_rate;
-                            api_res.err_count = api_err_count_arc.load(Ordering::SeqCst) as i32;
-                            api_res.throughput_per_second_kb = throughput_per_second_kb;
-                            api_res.error_rate =
-                                api_res.err_count as f64 / api_res.total_requests as f64 * 100.0;
-                            api_res.concurrent_number =
-                                api_concurrent_number_arc.load(Ordering::SeqCst) as i32;
-                            api_res.avg_response_time = if api_total_requests > 0 {
-                                (api_total_response_time_ms_arc.load(Ordering::SeqCst) as f64 / api_total_requests as f64).round() as u64
-                            } else {
-                                0
-                            };
-                            // 向最终结果中添加数据
-                            let mut res = results_arc.lock().await;
-                            match index < res.len() {
-                                true => {
-                                    res[index] = api_res.clone();
-                                }
-                                false => {}
-                            };
-                        }
                     }
                 }
             }
             Err(e) => {
-                // 总请求数
                 total_requests_arc.fetch_add(1, Ordering::Relaxed);
-                // api请求数
-                api_total_requests_arc.fetch_add(1, Ordering::Relaxed);
+                api_stats.total_requests.fetch_add(1, Ordering::Relaxed);
                 err_count_arc.fetch_add(1, Ordering::Relaxed);
-                api_err_count_arc.fetch_add(1, Ordering::Relaxed);
-                let status_code: u16;
-                match e.status() {
-                    None => {
-                        status_code = 0;
-                    }
-                    Some(code) => {
-                        status_code = u16::from(code);
-                    }
-                }
+                api_stats.err_count.fetch_add(1, Ordering::Relaxed);
+                let status_code: u16 = match e.status() {
+                    None => 0,
+                    Some(code) => u16::from(code),
+                };
 
                 if verbose {
                     eprintln!("{:#?}", e.to_string());
@@ -764,7 +526,6 @@ pub(crate) async fn start_concurrency(
                     .await;
             }
         }
-        // 接口级teardown
         if let Some(ref teardown_opts) = api_teardown_base {
             match setup::start_setup(
                 teardown_opts.clone(),
