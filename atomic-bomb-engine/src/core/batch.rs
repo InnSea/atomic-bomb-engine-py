@@ -32,6 +32,30 @@ use crate::models::step_option::{InnerStepOption, StepOption};
 /// 断言消费 worker 数量. 足够吃满 JSONPath 解析的 CPU, 同时避免过度调度
 const ASSERT_WORKER_COUNT: usize = 4;
 
+fn render_global_setup_urls_once(
+    options: Option<Vec<SetupApiEndpoint>>,
+    handlebars: &Handlebars,
+    context: &BTreeMap<String, Value>,
+    phase: &str,
+) -> anyhow::Result<Option<Vec<SetupApiEndpoint>>> {
+    let Some(mut opts) = options else {
+        return Ok(None);
+    };
+    for item in &mut opts {
+        let rendered = match handlebars.render_template(&item.url, &json!(context)) {
+            Ok(url) => url,
+            Err(e) => {
+                return Err(Error::msg(format!(
+                    "{} URL模板渲染失败, name: {:?}, url: {:?}, err: {:?}",
+                    phase, item.name, item.url, e
+                )));
+            }
+        };
+        item.url = rendered;
+    }
+    Ok(Some(opts))
+}
+
 pub async fn batch(
     result_sender: mpsc::Sender<Option<BatchResult>>,
     test_duration_secs: u64,
@@ -188,6 +212,22 @@ pub async fn batch(
     }
     // 停止信号
     let should_stop_flag = should_stop.unwrap_or_else(|| Arc::new(AtomicBool::new(false)));
+    // 复用Handlebars实例
+    let handlebars = Handlebars::new();
+    // 仅使用全局变量做一次性URL渲染（不依赖运行时提取值）
+    let global_url_render_context = extract_map.clone();
+    let setup_options = render_global_setup_urls_once(
+        setup_options,
+        &handlebars,
+        &global_url_render_context,
+        "全局setup",
+    )?;
+    let teardown_options = render_global_setup_urls_once(
+        teardown_options,
+        &handlebars,
+        &global_url_render_context,
+        "全局teardown",
+    )?;
     // 创建http客户端
     let builder = Client::builder()
         .cookie_store(cookie_store_enable)
@@ -221,8 +261,6 @@ pub async fn batch(
     // println!("extract_map:{:?}", extract_map);
     // 并发安全的提取字典（setup后只读，不需要Mutex）
     let extract_map_arc = Arc::new(extract_map);
-    // 复用Handlebars实例
-    let handlebars = Handlebars::new();
     // 收集每个 endpoint 的 stats, 让 collect_results / 最终结果从原子快照组装 ApiResult
     let mut api_endpoint_stats: Vec<Arc<ApiEndpointStats>> = Vec::new();
     // 针对每一个接口开始配置
@@ -498,4 +536,54 @@ pub async fn batch(
     });
     should_stop_tx.send(()).unwrap();
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::render_global_setup_urls_once;
+    use crate::models::setup::SetupApiEndpoint;
+    use handlebars::Handlebars;
+    use serde_json::{json, Value};
+    use std::collections::BTreeMap;
+
+    fn build_setup(url: &str) -> SetupApiEndpoint {
+        SetupApiEndpoint {
+            name: "global-setup".to_string(),
+            url: url.to_string(),
+            method: "GET".to_string(),
+            json: None,
+            form_data: None,
+            multipart_options: None,
+            headers: None,
+            cookies: None,
+            jsonpath_extract: None,
+        }
+    }
+
+    #[test]
+    fn test_render_global_setup_urls_once_success() {
+        let mut context = BTreeMap::<String, Value>::new();
+        context.insert("base".to_string(), json!("http://127.0.0.1:8080"));
+        let options = Some(vec![build_setup("{{base}}/setup")]);
+        let handlebars = Handlebars::new();
+
+        let rendered = render_global_setup_urls_once(options, &handlebars, &context, "全局setup")
+            .expect("should render url")
+            .expect("options should exist");
+
+        assert_eq!(rendered[0].url, "http://127.0.0.1:8080/setup");
+    }
+
+    #[test]
+    fn test_render_global_setup_urls_once_missing_key_renders_empty() {
+        let context = BTreeMap::<String, Value>::new();
+        let options = Some(vec![build_setup("{{base}}/setup")]);
+        let handlebars = Handlebars::new();
+
+        let rendered = render_global_setup_urls_once(options, &handlebars, &context, "全局setup")
+            .expect("render should not fail in non-strict mode")
+            .expect("options should exist");
+
+        assert_eq!(rendered[0].url, "/setup");
+    }
 }
