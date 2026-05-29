@@ -116,7 +116,7 @@ pub(crate) async fn collect_results(
     err_count: Arc<AtomicUsize>,
     max_resp_time: Arc<AtomicU64>,
     min_resp_time: Arc<AtomicU64>,
-    assert_error: Arc<Mutex<AssertErrorStats>>,
+    assert_error: AssertErrorStats,
     api_endpoint_stats: Vec<Arc<ApiEndpointStats>>,
     concurrent_number: Arc<AtomicUsize>,
     dura: Arc<Mutex<f64>>,
@@ -181,7 +181,7 @@ pub(crate) async fn collect_results(
                 };
                 // 短锁: 只取 errors Arc
                 let http_errors = http_errors.lock().await.errors.clone();
-                let assert_errors = assert_error.lock().await.errors.clone();
+                let assert_errors = assert_error.errors.clone();
                 let timestamp = match SystemTime::now().duration_since(UNIX_EPOCH) {
                     Ok(n) => n.as_millis(),
                     Err(_) => 0,
@@ -229,6 +229,9 @@ pub(crate) async fn collect_results(
                     let mut rps_queue = rps_queue.lock().await;
                     rps_queue.push(rps).await;
                 }
+                // parking_lot guard 不是 Send, 跨 await 会让 spawn 不能调度.
+                // 把锁内 clone 提到 await 之前.
+                let assert_errors_snap = assert_errors.lock().clone();
                 let result = BatchResult {
                     total_duration,
                     success_rate,
@@ -245,7 +248,7 @@ pub(crate) async fn collect_results(
                     throughput_per_second_kb: throughput_kb_s,
                     http_errors: http_errors.lock().await.clone(),
                     timestamp,
-                    assert_errors: assert_errors.lock().await.clone(),
+                    assert_errors: assert_errors_snap,
                     total_concurrent_number,
                     api_results: api_results_local.clone(),
                     errors_per_second,

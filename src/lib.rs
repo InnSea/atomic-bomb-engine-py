@@ -33,5 +33,29 @@ fn atomic_bomb_engine(m: &Bound<'_, PyModule>) -> PyResult<()> {
         m
     )?)?;
     m.add_class::<py_lib::batch_runner::BatchRunner>()?;
+
+    // ========== WebSocket 注册 ==========
+    m.add_function(wrap_pyfunction!(py_lib::ws_endpoint_func::ws_endpoint, m)?)?;
+    m.add_function(wrap_pyfunction!(py_lib::ws_message_func::ws_text, m)?)?;
+    m.add_function(wrap_pyfunction!(py_lib::ws_message_func::ws_binary, m)?)?;
+    m.add_function(wrap_pyfunction!(py_lib::ws_message_func::ws_json, m)?)?;
+    m.add_function(wrap_pyfunction!(py_lib::ws_match_func::ws_match_sequential, m)?)?;
+    m.add_function(wrap_pyfunction!(py_lib::ws_match_func::ws_match_jsonpath, m)?)?;
+    m.add_function(wrap_pyfunction!(py_lib::ws_match_func::ws_mode_oneway, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        py_lib::ws_match_func::ws_mode_request_response,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(py_lib::ws_options_func::ws_send_pattern, m)?)?;
+    m.add_function(wrap_pyfunction!(py_lib::ws_options_func::ws_heartbeat, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        py_lib::ws_options_func::ws_reconnect_policy,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        py_lib::ws_options_func::ws_assert_option,
+        m
+    )?)?;
+    m.add_class::<py_lib::ws_batch_runner::WsBatchRunner>()?;
     Ok(())
 }

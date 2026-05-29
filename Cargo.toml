@@ -19,7 +19,7 @@ anyhow = "1.0"
 serde = "1.0.202"
 
 [build]
-rustflags = ["-C", "target-feature=+crt-static"]
+rustflags = ["-C", "target-feature=+crt-static"] 
 
 
 [dependencies.pyo3]

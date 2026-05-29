@@ -10,8 +10,7 @@ use anyhow::Error;
 use futures::StreamExt;
 use handlebars::Handlebars;
 use histogram::AtomicHistogram;
-use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
+use rand::Rng;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, COOKIE};
 use reqwest::{multipart, Client, Method, StatusCode};
 use serde_json::{json, Value};
@@ -41,7 +40,7 @@ pub(crate) async fn start_concurrency(
     successful_requests_arc: Arc<AtomicUsize>,
     err_count_arc: Arc<AtomicUsize>,
     http_errors_arc: Arc<Mutex<HttpErrorStats>>,
-    assert_errors_arc: Arc<Mutex<AssertErrorStats>>,
+    assert_errors_arc: AssertErrorStats,
     tx_assert: Sender<AssertTask>,
     test_start: Instant,
     test_end: Instant,
@@ -270,8 +269,8 @@ pub(crate) async fn start_concurrency(
         if let Some(think_time) = think_time_clone {
             match think_time.min_millis <= think_time.max_millis {
                 true => {
-                    let mut rng = StdRng::from_entropy();
-                    let tt = rng.gen_range(think_time.min_millis..=think_time.max_millis);
+                    let tt = rand::thread_rng()
+                        .gen_range(think_time.min_millis..=think_time.max_millis);
                     if verbose {
                         println!("思考时间：{:?}", tt);
                     }

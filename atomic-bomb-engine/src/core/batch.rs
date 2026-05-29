@@ -146,7 +146,7 @@ pub async fn batch(
     // 统计http错误
     let http_errors = Arc::new(Mutex::new(HttpErrorStats::new()));
     // 统计断言错误
-    let assert_errors = Arc::new(Mutex::new(AssertErrorStats::new()));
+    let assert_errors = AssertErrorStats::new();
     // 引擎错误收集
     let engine_errors: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     // 总权重
@@ -343,7 +343,7 @@ pub async fn batch(
                     Arc::clone(&successful_requests),
                     Arc::clone(&err_count),
                     Arc::clone(&http_errors),
-                    Arc::clone(&assert_errors),
+                    assert_errors.clone(),
                     tx_assert.clone(),
                     test_start,
                     test_end,
@@ -372,7 +372,7 @@ pub async fn batch(
         Arc::clone(&err_count),
         Arc::clone(&max_response_time),
         Arc::clone(&min_response_time),
-        Arc::clone(&assert_errors),
+        assert_errors.clone(),
         api_endpoint_stats.clone(),
         Arc::clone(&concurrent_number),
         Arc::clone(&dura),
@@ -452,7 +452,7 @@ pub async fn batch(
     let total_response_size_kb = total_response_size.load(Ordering::SeqCst) as f64 / 1024.0;
     let throughput_kb_s = total_response_size_kb / test_duration_secs as f64;
     let http_errors_snapshot = http_errors.lock().await.errors.clone();
-    let assert_errors_snapshot = assert_errors.lock().await.errors.clone();
+    let assert_errors_snapshot = assert_errors.errors.clone();
     let timestamp = match SystemTime::now().duration_since(UNIX_EPOCH) {
         Ok(n) => n.as_millis(),
         Err(_) => 0,
@@ -504,6 +504,8 @@ pub async fn batch(
         };
         (p50, p95, p99)
     };
+    // parking_lot guard 不是 Send, 跨 await 会让 spawn 不能调度. 把锁内 clone 提到 await 之前.
+    let assert_errors_final = assert_errors_snapshot.lock().clone();
     let result = Ok(BatchResult {
         total_duration,
         success_rate,
@@ -520,7 +522,7 @@ pub async fn batch(
         throughput_per_second_kb: throughput_kb_s,
         http_errors: http_errors_snapshot.lock().await.clone(),
         timestamp,
-        assert_errors: assert_errors_snapshot.lock().await.clone(),
+        assert_errors: assert_errors_final,
         total_concurrent_number: total_concurrent_number_final,
         api_results: api_results_final,
         errors_per_second,

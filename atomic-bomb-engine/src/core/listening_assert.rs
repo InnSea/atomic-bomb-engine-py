@@ -26,15 +26,11 @@ async fn process_assert_task(task: AssertTask) {
             task.err_count.fetch_add(1, Ordering::Relaxed);
             task.api_err_count.fetch_add(1, Ordering::Relaxed);
             assertion_failed = true;
-            task.assert_errors
-                .lock()
-                .await
-                .increment(
-                    task.api_name.clone(),
-                    normalize_serde_error(&e),
-                    task.endpoint.url.clone(),
-                )
-                .await;
+            task.assert_errors.increment(
+                task.api_name.clone(),
+                normalize_serde_error(&e),
+                task.endpoint.url.clone(),
+            );
             None
         }
         Ok(val) => Some(val),
@@ -52,15 +48,11 @@ async fn process_assert_task(task: AssertTask) {
                         }
                         task.err_count.fetch_add(1, Ordering::Relaxed);
                         task.api_err_count.fetch_add(1, Ordering::Relaxed);
-                        task.assert_errors
-                            .lock()
-                            .await
-                            .increment(
-                                task.api_name.clone(),
-                                "没有匹配到任何结果".to_string(),
-                                task.endpoint.url.clone(),
-                            )
-                            .await;
+                        task.assert_errors.increment(
+                            task.api_name.clone(),
+                            "没有匹配到任何结果".to_string(),
+                            task.endpoint.url.clone(),
+                        );
                         assertion_failed = true;
                         break;
                     }
@@ -70,32 +62,24 @@ async fn process_assert_task(task: AssertTask) {
                         }
                         task.err_count.fetch_add(1, Ordering::Relaxed);
                         task.api_err_count.fetch_add(1, Ordering::Relaxed);
-                        task.assert_errors
-                            .lock()
-                            .await
-                            .increment(
-                                task.api_name.clone(),
-                                "匹配到多个值，无法断言".to_string(),
-                                task.endpoint.url.clone(),
-                            )
-                            .await;
+                        task.assert_errors.increment(
+                            task.api_name.clone(),
+                            "匹配到多个值，无法断言".to_string(),
+                            task.endpoint.url.clone(),
+                        );
                         assertion_failed = true;
                         break;
                     }
                     if let Some(result) = results.get(0).map(|&v| v) {
                         if *result != assert_option.reference_object {
-                            task.assert_errors
-                                .lock()
-                                .await
-                                .increment(
-                                    task.api_name.clone(),
-                                    format!(
-                                        "预期结果：{:?}, 实际结果：{:?}",
-                                        assert_option.reference_object, result
-                                    ),
-                                    task.endpoint.url.clone(),
-                                )
-                                .await;
+                            task.assert_errors.increment(
+                                task.api_name.clone(),
+                                format!(
+                                    "预期结果：{:?}, 实际结果：{:?}",
+                                    assert_option.reference_object, result
+                                ),
+                                task.endpoint.url.clone(),
+                            );
                             if task.verbose {
                                 eprintln!(
                                     "{:?}-预期结果：{:?}, 实际结果：{:?}",

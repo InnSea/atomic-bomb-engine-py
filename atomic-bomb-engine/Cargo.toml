@@ -27,6 +27,11 @@ futures = "0.3.30"
 handlebars = "5.1.2"
 rand = "0.8.5"
 url = "2.5.0"
+# WebSocket 支持: 与 reqwest 共用 native-tls, 避免 TLS 栈分裂
+tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
+futures-util = "0.3"
+dashmap = "6.1"
+uuid = { version = "1.10", features = ["v4"] }
 
 [target.'cfg(windows)'.dependencies]
 winapi = { version = "0.3", features = ["winbase"] }
