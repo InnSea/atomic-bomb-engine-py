@@ -247,6 +247,16 @@ pub async fn ws_batch(
             EndpointPrebuilt::build(&endpoint_arc)
                 .map_err(|e| Error::msg(format!("WS endpoint-{} 预编译失败: {:?}", endpoint_arc.name, e)))?,
         );
+        // connect 限流: 同 endpoint 同时在飞 SYN 数. 取 min(256, conns) 是个
+        // 保守值 — Linux 默认 somaxconn=128/4096, macOS=128, websockets 库默认
+        // backlog=100. 给到 256 既不会显著拉慢首秒爬坡 (256 个 SYN 在多数 OS
+        // 都能瞬间完成), 又能避免一次涌入 2000+ 个 SYN 把对端打死. 单连接场景
+        // 也不至于退化为完全串行.
+        let connect_limit = std::cmp::min(256, conns_for_endpoint).max(1);
+        let connect_limiter = Arc::new(tokio::sync::Semaphore::new(connect_limit));
+        // connect_timeout: 沿用 batch 入口的 timeout_secs (用户可配), 0 走默认.
+        // 默认值 (无配置时 timeout_secs=0) 给一个 10s 兜底, 比 OS 75s 友好得多.
+        let connect_timeout = if timeout_secs > 0 { timeout_secs } else { 10 };
         for _ in 0..conns_for_endpoint {
             let handle = tokio::spawn(start_ws_task::start_ws_concurrency(
                 controller.clone(),
@@ -263,6 +273,8 @@ pub async fn ws_batch(
                 engine_errors.clone(),
                 http_client.clone(),
                 is_need_render_template,
+                connect_limiter.clone(),
+                connect_timeout,
                 verbose,
             ));
             handles.push(handle);

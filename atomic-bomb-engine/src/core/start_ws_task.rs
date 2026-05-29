@@ -202,6 +202,15 @@ pub(crate) async fn start_ws_concurrency(
     engine_errors: Arc<parking_lot::Mutex<Vec<String>>>,
     http_client: Client,
     is_need_render_template: bool,
+    // 全局 connect 限流: 同一 endpoint 同时只允许 N 个 SYN 在飞, 避免握手风暴
+    // 把对端的 listen backlog 打爆 (macOS 默认 somaxconn=128, websockets 库
+    // 默认 backlog=100, Linux 默认 backlog=128). 由 ws_batch 在 endpoint 维度
+    // 构造一次, 所有连接共享.
+    connect_limiter: Arc<tokio::sync::Semaphore>,
+    // connect_async 的硬超时. 0 表示不限 (沿用 OS 默认, macOS ~75s).
+    // 对端 backlog 满时 SYN 会被静默丢弃, 不加超时会让连接挂死秒级以上,
+    // 占着 task / 端口都不释放.
+    connect_timeout_secs: u64,
     verbose: bool,
 ) -> Result<(), Error> {
     let semaphore = controller.get_semaphore();
@@ -294,7 +303,31 @@ pub(crate) async fn start_ws_concurrency(
         };
 
         let connect_start = Instant::now();
-        let ws_stream: WsStream = match connect_async(req).await {
+        // 限流 + 超时双保护:
+        // - connect_limiter: 同 endpoint 全局同时在飞 SYN 数限制, 避免一次性
+        //   2000 个 SYN 把对端 listen backlog 打爆导致大量 SYN drop + timeout
+        // - connect_timeout: 把 OS 默认的 75s connect 超时降到秒级, 对端 backlog
+        //   满时快速失败而不是占着 task 几十秒
+        let _connect_permit = connect_limiter.acquire().await.expect("connect 信号量");
+        let connect_fut = connect_async(req);
+        let connect_result = if connect_timeout_secs > 0 {
+            match tokio::time::timeout(
+                Duration::from_secs(connect_timeout_secs),
+                connect_fut,
+            )
+            .await
+            {
+                Ok(r) => r,
+                Err(_) => Err(tokio_tungstenite::tungstenite::Error::Io(
+                    std::io::Error::new(std::io::ErrorKind::TimedOut, "connect 超时"),
+                )),
+            }
+        } else {
+            connect_fut.await
+        };
+        // 握手已发起 (或失败), 释放 permit 让下一个 task 进入 SYN 队列
+        drop(_connect_permit);
+        let ws_stream: WsStream = match connect_result {
             Ok((s, _resp)) => {
                 stats.connections_opened.fetch_add(1, Ordering::Relaxed);
                 stats.concurrent_number.fetch_add(1, Ordering::Relaxed);
