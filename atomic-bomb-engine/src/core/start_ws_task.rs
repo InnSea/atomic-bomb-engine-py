@@ -844,6 +844,16 @@ async fn on_message_received(
     }
 }
 
+/// 判定运行时是否饱和到 last_recv 不可信的程度.
+///
+/// `scheduling_lag` 是 heartbeat_loop 本轮 tick 相对预期周期的滞后量, 作为运行时
+/// 饱和的代理 (heartbeat_loop 与 receiver_loop 共享运行时, 我们被饿到调度延迟,
+/// receiver 同样被饿). 阈值取 interval 的一半: 准点 tick 的抖动通常远小于半周期,
+/// 超过这个量级的滞后才视为饱和.
+fn is_runtime_starved(scheduling_lag: Duration, interval: Duration) -> bool {
+    scheduling_lag > interval / 2
+}
+
 async fn heartbeat_loop(
     write_tx: mpsc::Sender<Message>,
     prebuilt: Arc<EndpointPrebuilt>,
@@ -862,14 +872,43 @@ async fn heartbeat_loop(
     let ctx = json!(extract_map);
 
     let mut ticker = tokio::time::interval(interval);
+    // Delay 而非默认的 Burst: 运行时饱和导致错过若干次 tick 后, 默认行为会
+    // 连发多次 tick 追平进度, 这些追平 tick 的调度延迟≈0, 会让下面的饱和判定
+    // 在"刚恢复"的瞬间误读为运行时健康, 从而在 receiver_loop 还没来得及刷新
+    // last_recv 时误杀连接. Delay 让每次 tick 都在上一次返回后再等满一个周期,
+    // 给 receiver_loop 留出刷新窗口, 同时也避免恢复后突发补发一堆心跳.
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     ticker.tick().await;
 
     loop {
+        // 记录 tick 前的时刻, 用来测算本轮被调度的延迟.
+        let before_tick = Instant::now();
         ticker.tick().await;
 
-        // 检查超时
+        // 超时判活前先排除"本地饱和"这一误判源.
+        //
+        // 心跳判超时的依据是 last_recv (receiver_loop 收到任何消息就刷新).
+        // 它隐含前提: last_recv 不更新 == 对端没发数据. 该前提仅在运行时不饱和
+        // 时成立. CPU 打满时 receiver_loop 抢不到调度, last_recv 迟迟不刷新,
+        // 但数据其实就堆在 socket 缓冲区里 —— 此时判超时就是把"自己没空读"
+        // 误判成"对端死了", 会成批误杀健康连接 (过载时观测到的"心跳超时 == 异常断开"
+        // 即源于此).
+        //
+        // heartbeat_loop 与 receiver_loop 跑在同一个运行时. 用本循环自身的调度
+        // 延迟作为运行时饱和的代理: 若我们这次 tick 比预期晚了很多, 说明运行时
+        // 正被压满, receiver_loop 同样抢不到 CPU, 此刻的 last_recv 不可信 —— 跳过
+        // 本轮超时判定, 让连接降级为"变慢"而非被杀. 若 tick 基本准点, 说明调度
+        // 健康, 此时 last_recv 陈旧才是真的对端静默, 照常判超时.
+        //
+        // 阈值取 interval 的一半: 准点 tick 的实际间隔约等于 interval, 抖动通常
+        // 远小于半个周期; 超过这个量级的滞后才视为饱和, 既能滤掉正常抖动, 又能
+        // 在真过载时及时止杀.
+        let scheduling_lag = before_tick.elapsed().saturating_sub(interval);
+        let runtime_starved = is_runtime_starved(scheduling_lag, interval);
+
+        // 检查超时 (仅在运行时未饱和时才据此杀连接)
         let last = *last_recv.lock();
-        if last.elapsed() > timeout {
+        if !runtime_starved && last.elapsed() > timeout {
             return ExitReason::HeartbeatTimeout;
         }
 
@@ -912,5 +951,51 @@ async fn match_timeout_watcher(
             stats.match_timeouts.fetch_add(expired, Ordering::Relaxed);
             stats.err_count.fetch_add(expired, Ordering::Relaxed);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_runtime_starved;
+    use std::time::Duration;
+
+    const INTERVAL: Duration = Duration::from_secs(2);
+
+    #[test]
+    fn punctual_tick_is_not_starved() {
+        // 准点 tick: 滞后量≈0, 运行时健康, 应据 last_recv 正常判超时
+        assert!(!is_runtime_starved(Duration::ZERO, INTERVAL));
+    }
+
+    #[test]
+    fn small_jitter_is_not_starved() {
+        // 正常抖动 (几十~几百 ms) 远小于半周期, 不应判为饱和
+        assert!(!is_runtime_starved(Duration::from_millis(200), INTERVAL));
+    }
+
+    #[test]
+    fn lag_just_below_half_interval_is_not_starved() {
+        // 边界内侧: 略小于半周期, 仍视为健康
+        assert!(!is_runtime_starved(INTERVAL / 2 - Duration::from_millis(1), INTERVAL));
+    }
+
+    #[test]
+    fn lag_beyond_half_interval_is_starved() {
+        // 边界外侧: 超过半周期的调度滞后, 判为运行时饱和 -> 本轮跳过杀连接
+        assert!(is_runtime_starved(INTERVAL / 2 + Duration::from_millis(1), INTERVAL));
+    }
+
+    #[test]
+    fn severe_lag_is_starved() {
+        // 严重饿死 (滞后数秒), 必然判为饱和
+        assert!(is_runtime_starved(Duration::from_secs(10), INTERVAL));
+    }
+
+    #[test]
+    fn one_second_interval_floor() {
+        // 最小周期 1s 时, 阈值为 500ms
+        let interval = Duration::from_secs(1);
+        assert!(!is_runtime_starved(Duration::from_millis(400), interval));
+        assert!(is_runtime_starved(Duration::from_millis(600), interval));
     }
 }
