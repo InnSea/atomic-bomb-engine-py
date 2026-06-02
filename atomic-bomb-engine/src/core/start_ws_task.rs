@@ -572,12 +572,16 @@ async fn run_connection_lifecycle(
         _ = stop_task => ExitReason::Normal,
         _ = match_timeout_task => ExitReason::Normal,
     };
-    // 优雅关闭: drop write_tx 让 writer_task 收到 channel 关闭信号, 它会自己
-    // 发 Close frame 并关流. 加 2s 超时 — 对端不 ACK Close frame 时
-    // sink.close() 会无限挂住, 几千连接同时关闭场景下能拖死整个 batch teardown.
-    // 超时后 abort 强制释放 (TCP RST), 个别连接关闭语义不优雅但无副作用.
+    // 关闭 writer_task:
+    // - 收到停止信号 (should_stop): 直接 abort, 不等待 Close frame 握手.
+    //   压测场景下被停止的连接不需要优雅关闭, 跳过 2s 等待能让数千连接的
+    //   TCP 缓冲区和任务栈瞬间释放, 避免内存长时间居高不下.
+    // - 自然退出 (心跳超时/stream 错误/服务端关闭): 走优雅关闭, 发 Close frame
+    //   并关流, 2s 超时兜底防止 sink.close() 无限挂住.
     drop(write_tx);
-    if tokio::time::timeout(Duration::from_secs(2), &mut writer_task)
+    if should_stop.load(Ordering::SeqCst) {
+        writer_task.abort();
+    } else if tokio::time::timeout(Duration::from_secs(2), &mut writer_task)
         .await
         .is_err()
     {
