@@ -1,4 +1,4 @@
-maturin build --release --target x86_64-apple-darwin -i python3.8 -i python3.9 -i python3.10 -i python3.11 -i python3.12 -i python3.13 -i python3.14 &&
-maturin build --release -i python3.8 -i python3.9 -i python3.10 -i python3.11 -i python3.12 -i python3.13 -i python3.14 &&
+python3.15 -m maturin build --release --locked --target x86_64-apple-darwin -i python3.15 &&
+python3.15 -m maturin build --release --locked -i python3.15 &&
 twine upload --repository pypi --config-file ~/.pypirc ./target/wheels/* &&
 rm ./target/wheels/*

@@ -19,9 +19,12 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ['3.13', '3.14']
+        python-version: ['3.13', '3.14', '3.15']
     container:
       image: quay.io/pypa/manylinux2014_x86_64
+    defaults:
+      run:
+        shell: bash
     
     steps:
       - name: 📥 签出代码
@@ -38,7 +41,7 @@ jobs:
       - name: 📦 安装 maturin
         run: |
           PY_VER=$(echo "${{ matrix.python-version }}" | sed 's/\.//')
-          /opt/python/cp${PY_VER}-cp${PY_VER}/bin/pip install maturin
+          /opt/python/cp${PY_VER}-cp${PY_VER}/bin/python -m pip install "maturin>=1.14,<2"
       
       - name: 🔨 构建 wheel (manylinux2014)
         run: |
@@ -46,8 +49,15 @@ jobs:
           PY_VER=$(echo "${{ matrix.python-version }}" | sed 's/\.//')
           PYTHON_BIN=/opt/python/cp${PY_VER}-cp${PY_VER}/bin
           
-          $PYTHON_BIN/maturin build --release --strip \
+          $PYTHON_BIN/python -m maturin build --release --strip --locked \
             --interpreter $PYTHON_BIN/python
+
+      - name: 验证 wheel
+        run: |
+          PY_VER=$(echo "${{ matrix.python-version }}" | sed 's/\.//')
+          PYTHON_BIN=/opt/python/cp${PY_VER}-cp${PY_VER}/bin
+          $PYTHON_BIN/python -m pip install --force-reinstall target/wheels/*-cp${PY_VER}-cp${PY_VER}-*.whl
+          $PYTHON_BIN/python -c "import atomic_bomb_engine as engine; engine.BatchRunner(); engine.WsBatchRunner()"
       
       - name: 📊 显示构建结果
         run: |
@@ -64,6 +74,7 @@ jobs:
         with:
           name: linux-python${{ matrix.python-version }}-wheel
           path: target/wheels/*.whl
+          if-no-files-found: error
           retention-days: 30
       
       - name: 📝 生成构建信息
@@ -98,7 +109,7 @@ jobs:
           merge-multiple: true
       
       - name: 📦 创建 Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           files: wheels/*.whl
           draft: false

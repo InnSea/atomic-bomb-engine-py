@@ -12,7 +12,7 @@ crate-type = ["cdylib"]
 [dependencies]
 atomic-bomb-engine = { path = "./atomic-bomb-engine" }
 tokio = "1"
-pyo3-async-runtimes = { version = "0.27", features = ["attributes", "tokio-runtime"] }
+pyo3-async-runtimes = { version = "0.30", features = ["attributes", "tokio-runtime"] }
 serde_json = { version = "1.0", features = [] }
 futures = "0.3"
 anyhow = "1.0"
@@ -23,7 +23,7 @@ rustflags = ["-C", "target-feature=+crt-static"]
 
 
 [dependencies.pyo3]
-version = "0.27"
+version = "0.30.1"
 features = ["extension-module", "auto-initialize", "serde"]
 
 [tool.maturin]

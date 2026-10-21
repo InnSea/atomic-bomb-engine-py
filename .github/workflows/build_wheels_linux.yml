@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ['3.14']
+        python-version: ['3.15']
 
     steps:
       - name: 签出rust代码
@@ -28,7 +28,7 @@ jobs:
           path: vue-project
 
       - name: 安装Node.js
-        uses: actions/setup-node@v2
+        uses: actions/setup-node@v6
         with:
           node-version: '18'
 
@@ -45,25 +45,27 @@ jobs:
         run: cp -r vue-project/dist/* python/atomic_bomb_engine/dist/
 
       - name: 设置python环境
-        uses: actions/setup-python@v2
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
 
       - name: 安装Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
+        uses: dtolnay/rust-toolchain@stable
 
       - name: 安装maturin
-        run: pip install maturin
+        run: python -m pip install "maturin>=1.14,<2"
 
       - name: 构建wheels
-        run: maturin build --release --interpreter python${{ matrix.python-version }}
+        run: python -m maturin build --release --locked --interpreter python${{ matrix.python-version }}
+
+      - name: 验证 Python 3.15 wheel
+        run: |
+          python -m pip install --force-reinstall target/wheels/*-cp315-cp315-*.whl
+          python -c "import atomic_bomb_engine as engine; engine.BatchRunner(); engine.WsBatchRunner()"
 
       - name: 上传wheels作为artifacts
         uses: actions/upload-artifact@v4
         with:
           name: wheels
           path: target/wheels/*.whl
+          if-no-files-found: error

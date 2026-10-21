@@ -1,10 +1,11 @@
 [build-system]
-requires = ["maturin>=1.4"]
+requires = ["maturin>=1.14,<2"]
 build-backend = "maturin"
 
 [project]
 name = "atomic_bomb_engine"
 version = "0.41.3"
+requires-python = ">=3.9"
 description = "使用rust开发的高性能python压测工具"
 license = "MIT"
 readme = "README.md"
@@ -13,6 +14,7 @@ keywords = ["rust", "python", "binding"]
 classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
     "Programming Language :: Rust",
     "Operating System :: OS Independent",
 ]

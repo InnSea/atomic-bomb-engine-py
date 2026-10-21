@@ -7,16 +7,16 @@ on:
       python_version:
         description: 'Python 版本'
         required: true
-        default: '3.13'
+        default: '3.15'
         type: choice
         options:
-          - '3.8'
           - '3.9'
           - '3.10'
           - '3.11'
           - '3.12'
           - '3.13'
           - '3.14'
+          - '3.15'
       
       build_mode:
         description: '构建模式'
@@ -33,6 +33,9 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: quay.io/pypa/manylinux2014_x86_64
+    defaults:
+      run:
+        shell: bash
     
     steps:
       - name: 📥 签出代码
@@ -47,10 +50,10 @@ jobs:
       
       - name: 📦 安装 maturin
         run: |
-          # 将版本号转换为 cpXY 格式（例如 3.13 -> cp313）
+          # 将版本号转换为 cpXY 格式（例如 3.15 -> cp315）
           PY_VER=$(echo "${{ github.event.inputs.python_version }}" | sed 's/\.//')
           PYTHON_PATH="/opt/python/cp${PY_VER}-cp${PY_VER}/bin"
-          ${PYTHON_PATH}/pip install maturin
+          ${PYTHON_PATH}/python -m pip install "maturin>=1.14,<2"
       
       - name: 🔨 构建 wheel (${{ github.event.inputs.build_mode }})
         run: |
@@ -59,12 +62,19 @@ jobs:
           PYTHON_PATH="/opt/python/cp${PY_VER}-cp${PY_VER}/bin"
           
           if [ "${{ github.event.inputs.build_mode }}" = "release" ]; then
-            ${PYTHON_PATH}/maturin build --release --strip \
+            ${PYTHON_PATH}/python -m maturin build --release --strip --locked \
               --interpreter ${PYTHON_PATH}/python
           else
-            ${PYTHON_PATH}/maturin build \
+            ${PYTHON_PATH}/python -m maturin build --locked \
               --interpreter ${PYTHON_PATH}/python
           fi
+
+      - name: 验证 wheel
+        run: |
+          PY_VER=$(echo "${{ github.event.inputs.python_version }}" | sed 's/\.//')
+          PYTHON_PATH="/opt/python/cp${PY_VER}-cp${PY_VER}/bin"
+          ${PYTHON_PATH}/python -m pip install --force-reinstall target/wheels/*-cp${PY_VER}-cp${PY_VER}-*.whl
+          ${PYTHON_PATH}/python -c "import atomic_bomb_engine as engine; engine.BatchRunner(); engine.WsBatchRunner()"
       
       - name: 📊 显示构建结果
         run: |
@@ -80,6 +90,7 @@ jobs:
         with:
           name: linux-python${{ github.event.inputs.python_version }}-${{ github.event.inputs.build_mode }}-wheel
           path: target/wheels/*.whl
+          if-no-files-found: error
           retention-days: 30
       
       - name: 💬 构建摘要
