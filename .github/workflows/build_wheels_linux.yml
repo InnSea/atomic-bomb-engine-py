@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ['3.15']
+        python-version: ['3.14']
 
     steps:
       - name: 签出rust代码
@@ -53,14 +53,14 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: 安装maturin
-        run: python -m pip install "maturin>=1.14,<2"
+        run: python -m pip install "maturin>=1.4,<2"
 
       - name: 构建wheels
         run: python -m maturin build --release --locked --interpreter python${{ matrix.python-version }}
 
-      - name: 验证 Python 3.15 wheel
+      - name: 验证 Python 3.14 wheel
         run: |
-          python -m pip install --force-reinstall target/wheels/*-cp315-cp315-*.whl
+          python -m pip install --force-reinstall target/wheels/*-cp314-cp314-*.whl
           python -c "import atomic_bomb_engine as engine; engine.BatchRunner(); engine.WsBatchRunner()"
 
       - name: 上传wheels作为artifacts

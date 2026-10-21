@@ -8,7 +8,7 @@
 #### [atomic-bomb-engine-front](https://github.com/GiantAxeWhy/atomic-bomb-engine-front)
 
 ## 使用条件：
-- python版本 >= 3.9（支持 Python 3.15）
+- python版本 >= 3.8（支持 Python 3.14）
 - windows(x86), linux(x86), mac
 
 ## 使用方法：

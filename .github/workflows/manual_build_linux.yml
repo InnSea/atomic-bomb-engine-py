@@ -7,7 +7,7 @@ on:
       python_version:
         description: 'Python 版本'
         required: true
-        default: '3.15'
+        default: '3.14'
         type: choice
         options:
           - '3.9'
@@ -16,7 +16,6 @@ on:
           - '3.12'
           - '3.13'
           - '3.14'
-          - '3.15'
       
       build_mode:
         description: '构建模式'
@@ -50,10 +49,10 @@ jobs:
       
       - name: 📦 安装 maturin
         run: |
-          # 将版本号转换为 cpXY 格式（例如 3.15 -> cp315）
+          # 将版本号转换为 cpXY 格式（例如 3.14 -> cp314）
           PY_VER=$(echo "${{ github.event.inputs.python_version }}" | sed 's/\.//')
           PYTHON_PATH="/opt/python/cp${PY_VER}-cp${PY_VER}/bin"
-          ${PYTHON_PATH}/python -m pip install "maturin>=1.14,<2"
+          ${PYTHON_PATH}/python -m pip install "maturin>=1.4,<2"
       
       - name: 🔨 构建 wheel (${{ github.event.inputs.build_mode }})
         run: |
